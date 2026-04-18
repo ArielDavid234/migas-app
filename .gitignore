@@ -1,0 +1,16 @@
+# gitignore for MigasApp
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+.env
+dist/
+build/
+*.spec
+exports/
+backups/
+product_images/
