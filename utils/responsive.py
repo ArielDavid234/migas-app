@@ -131,11 +131,17 @@ def r_side_panel_width(page: ft.Page):
     return r_val(page, None, 280, 320)
 
 
+# Ancho mínimo de ventana para mostrar el panel lateral junto al contenido.
+# Sidebar (~240px) + panel (~300px) + contenido mínimo + padding ≈ 950px
+_SIDE_PANEL_MIN_WIDTH = 950
+
 # ── Layout helpers ───────────────────────────────────────────
 def responsive_layout(page: ft.Page, main_content, side_panel, side_width=320):
-    """Return Row (desktop/tablet) or stacked Column (phone) layout."""
+    """Return Row (desktop/tablet) or stacked Column (phone/narrow window) layout."""
     d = get_device(page)
-    if d == PHONE:
+    page_w = _get_width(page)
+    # En teléfono O cuando la ventana es muy angosta, apilar verticalmente
+    if d == PHONE or page_w < _SIDE_PANEL_MIN_WIDTH:
         return ft.Column([
             main_content,
             side_panel,

@@ -345,17 +345,17 @@ def main(page: ft.Page):
 
         _rebuild_layout_fn[0] = _build_layout
 
-        # Track last device type and calendar-visibility threshold to avoid unnecessary rebuilds
+        # Track last device type and window-width threshold to avoid unnecessary rebuilds
         last_device = [get_device(page)]
-        _CALENDAR_THRESHOLD = 950
-        last_show_cal = [(page.width or 1200) >= _CALENDAR_THRESHOLD]
+        _LAYOUT_THRESHOLD = 950
+        last_wide = [(page.width or 1200) >= _LAYOUT_THRESHOLD]
 
         def _on_resize(e):
             device = get_device(page)
-            show_cal = (page.width or 1200) >= _CALENDAR_THRESHOLD
-            if device != last_device[0] or show_cal != last_show_cal[0]:
+            is_wide = (page.width or 1200) >= _LAYOUT_THRESHOLD
+            if device != last_device[0] or is_wide != last_wide[0]:
                 last_device[0] = device
-                last_show_cal[0] = show_cal
+                last_wide[0] = is_wide
                 _build_layout(_current_route[0])
 
         page.on_resized = _on_resize

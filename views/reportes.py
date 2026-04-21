@@ -397,18 +397,7 @@ def reportes_view(page: ft.Page, user):
         ft.Column(initial_content, ref=content_area, spacing=16, scroll=ft.ScrollMode.AUTO, expand=True),
     ], expand=True)
 
-    # Ocultar el calendario si no hay suficiente ancho disponible
-    # sidebar (~240px) + calendario (~280px) + padding → necesita al menos 950px
-    page_w = (page.width or 0) or (getattr(page, "window", None) and page.window.width) or 1200
-    show_calendar = page_w >= 950
-
-    layout = (
-        responsive_layout(page, main_col, cal)
-        if show_calendar
-        else ft.Column([main_col], expand=True)
-    )
-
     return ft.Container(
-        content=layout,
+        content=responsive_layout(page, main_col, cal),
         padding=r_padding(page), expand=True,
     )
