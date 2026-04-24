@@ -169,7 +169,8 @@ def inventario_view(page: ft.Page, user):
                        is_success=True)
         _refresh()
 
-    _import_picker = ft.FilePicker(on_result=_on_import_result)
+    _import_picker = ft.FilePicker()
+    _import_picker.on_result = _on_import_result
     page.services.append(_import_picker)
 
     def _open_import_dialog():
