@@ -224,11 +224,22 @@ class Schedule(Base):
 
 # ---------- Rents ----------
 
+class RentTenant(Base):
+    """Personas o empresas a las que se les cobra renta."""
+    __tablename__ = "rent_tenants"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), unique=True, nullable=False)
+    notes = Column(String(300), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+
 class Rent(Base):
     __tablename__ = "rents"
 
     id = Column(Integer, primary_key=True)
-    tenant = Column(String(100), nullable=False)  # "Elisa" o "Roinier"
+    tenant = Column(String(100), nullable=False)
     month = Column(Date, nullable=False)
     amount = Column(Float, nullable=False)
     status = Column(SAEnum(RentStatus), default=RentStatus.PENDING)

@@ -1,16 +1,16 @@
 import flet as ft
 from datetime import date
 from database.db import get_session
-from database.models import Rent, RentStatus
+from database.models import Rent, RentStatus, RentTenant, UserRole
 from components.calendar_picker import calendar_picker
 from components.confirm_dialog import confirm_delete_dialog
 from utils.responsive import is_mobile, responsive_layout, r_padding, r_font_title, r_calendar_width, r_dialog_width, r_field_width, is_phone
+from utils.toast import show_toast
 from assets.styles import (
     PRIMARY, PRIMARY_DARK, SURFACE, SUCCESS, ERROR, ACCENT,
     TEXT_PRIMARY, TEXT_SECONDARY, TITLE_SIZE, SUBTITLE_SIZE, BODY_SIZE, SMALL_SIZE, DIVIDER_COLOR,
 )
 
-TENANTS = ["Elisa", "Roinier"]
 MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
          "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
@@ -20,6 +20,25 @@ def rentas_view(page: ft.Page, user):
 
     selected_date = date.today()
     content_area = ft.Ref[ft.Column]()
+    subtitle_ref = ft.Ref[ft.Text]()
+
+    is_admin = user.role == UserRole.ADMIN
+
+    # ── helpers ──
+
+    def _load_tenants() -> list[str]:
+        session = get_session()
+        try:
+            tenants = session.query(RentTenant).filter_by(is_active=True).order_by(RentTenant.name).all()
+            return [t.name for t in tenants]
+        finally:
+            session.close()
+
+    def _build_subtitle() -> str:
+        tenants = _load_tenants()
+        if tenants:
+            return ", ".join(tenants)
+        return "Sin inquilinos registrados"
 
     def _load_rents(d: date):
         session = get_session()
@@ -41,8 +60,167 @@ def rentas_view(page: ft.Page, user):
         content_area.current.controls.clear()
         content_area.current.controls.extend(_build_content(selected_date))
         content_area.current.update()
+        if subtitle_ref.current:
+            subtitle_ref.current.value = _build_subtitle()
+            subtitle_ref.current.update()
 
-    # ── dialogs ──
+    # ── diálogo de gestión de inquilinos (solo admin) ──
+
+    def _manage_tenants_dialog():
+        ph = is_phone(page)
+        tenants_col = ft.Ref[ft.Column]()
+
+        def _load_tenant_rows():
+            session = get_session()
+            try:
+                tenants = session.query(RentTenant).order_by(RentTenant.name).all()
+                rows = []
+                for t in tenants:
+                    active = t.is_active
+
+                    def _toggle(e, tid=t.id, was_active=active):
+                        s = get_session()
+                        try:
+                            rec = s.query(RentTenant).get(tid)
+                            rec.is_active = not was_active
+                            s.commit()
+                        finally:
+                            s.close()
+                        _reload_rows()
+
+                    def _delete_tenant(e, tid=t.id, tname=t.name):
+                        def _do():
+                            s = get_session()
+                            try:
+                                s.query(Rent).filter_by(tenant=tname)
+                                rec = s.query(RentTenant).get(tid)
+                                if rec:
+                                    s.delete(rec)
+                                    s.commit()
+                            finally:
+                                s.close()
+                            _reload_rows()
+                        confirm_delete_dialog(
+                            page,
+                            "Eliminar Inquilino",
+                            f"¿Eliminar a '{tname}'? Sus rentas registradas no se borran.",
+                            _do,
+                        )
+
+                    rows.append(ft.Row([
+                        ft.Text(
+                            t.name, size=BODY_SIZE, color=TEXT_PRIMARY, expand=True,
+                            color_scheme_key=ft.ColorSchemeKey.ON_SURFACE if active else None,
+                            opacity=1.0 if active else 0.45,
+                        ),
+                        ft.Tooltip(
+                            message="Desactivar" if active else "Reactivar",
+                            content=ft.IconButton(
+                                icon=ft.Icons.TOGGLE_ON if active else ft.Icons.TOGGLE_OFF,
+                                icon_color=SUCCESS if active else TEXT_SECONDARY,
+                                icon_size=20,
+                                on_click=_toggle,
+                            ),
+                        ),
+                        ft.Tooltip(
+                            message="Eliminar",
+                            content=ft.IconButton(
+                                icon=ft.Icons.DELETE_OUTLINE,
+                                icon_color=ERROR,
+                                icon_size=18,
+                                on_click=_delete_tenant,
+                            ),
+                        ),
+                    ], vertical_alignment=ft.CrossAxisAlignment.CENTER))
+                return rows
+            finally:
+                session.close()
+
+        def _reload_rows():
+            tenants_col.current.controls.clear()
+            tenants_col.current.controls.extend(_load_tenant_rows())
+            tenants_col.current.update()
+            _refresh()
+
+        new_name = ft.TextField(
+            label="Nombre del inquilino / empresa",
+            expand=True,
+            border_color=PRIMARY,
+            text_size=BODY_SIZE,
+            autofocus=True,
+        )
+        add_error = ft.Text("", color=ERROR, size=SMALL_SIZE)
+
+        def _add_tenant(e):
+            name = new_name.value.strip()
+            if not name:
+                add_error.value = "Escribe un nombre."
+                add_error.update()
+                return
+            session = get_session()
+            try:
+                existing = session.query(RentTenant).filter(
+                    RentTenant.name.ilike(name)
+                ).first()
+                if existing:
+                    if not existing.is_active:
+                        existing.is_active = True
+                        session.commit()
+                        show_toast(page, f"'{existing.name}' reactivado", is_success=True)
+                    else:
+                        add_error.value = f"'{name}' ya existe."
+                        add_error.update()
+                        return
+                else:
+                    session.add(RentTenant(name=name))
+                    session.commit()
+                    show_toast(page, f"Inquilino '{name}' agregado", is_success=True)
+            finally:
+                session.close()
+            new_name.value = ""
+            add_error.value = ""
+            _reload_rows()
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.PEOPLE_ALT, color=PRIMARY_DARK, size=24),
+                ft.Text("Gestionar Inquilinos", size=SUBTITLE_SIZE,
+                        weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
+            ], spacing=8),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Agrega personas o empresas a las que cobrar renta:",
+                            size=SMALL_SIZE, color=TEXT_SECONDARY),
+                    ft.Row([new_name,
+                            ft.IconButton(
+                                icon=ft.Icons.ADD_CIRCLE,
+                                icon_color=SUCCESS,
+                                icon_size=26,
+                                tooltip="Agregar",
+                                on_click=_add_tenant,
+                            )], spacing=4),
+                    add_error,
+                    ft.Divider(height=1, color=DIVIDER_COLOR),
+                    ft.Column(
+                        _load_tenant_rows(),
+                        ref=tenants_col,
+                        spacing=4,
+                        scroll=ft.ScrollMode.AUTO,
+                    ),
+                ], spacing=10, tight=True),
+                width=r_dialog_width(page, 380),
+                height=350,
+            ),
+            actions=[
+                ft.TextButton(
+                    content=ft.Text("Cerrar"),
+                    on_click=lambda e: page.pop_dialog(),
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.show_dialog(dlg)
 
     def _add_rent_dialog():
         ph = is_phone(page)
@@ -262,15 +440,25 @@ def rentas_view(page: ft.Page, user):
         ft.Row([
             ft.Column([
                 ft.Text("Rentas", size=r_font_title(page), weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
-                ft.Text("Rentas de Elisa y Roinier", size=BODY_SIZE, color=TEXT_SECONDARY),
+                ft.Text(_build_subtitle(), ref=subtitle_ref, size=BODY_SIZE, color=TEXT_SECONDARY),
             ], spacing=4, expand=True),
-            ft.ElevatedButton(
-                content=ft.Row([ft.Icon(ft.Icons.ADD, size=16, color="white"),
-                                ft.Text("Nueva Renta", size=SMALL_SIZE, color="white")], spacing=4),
-                bgcolor=SUCCESS, on_click=lambda e: _add_rent_dialog(),
-                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6),
-                                     padding=ft.padding.symmetric(horizontal=12, vertical=8)),
-            ),
+            ft.Row([
+                ft.ElevatedButton(
+                    content=ft.Row([ft.Icon(ft.Icons.ADD, size=16, color="white"),
+                                    ft.Text("Nueva Renta", size=SMALL_SIZE, color="white")], spacing=4),
+                    bgcolor=SUCCESS, on_click=lambda e: _add_rent_dialog(),
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6),
+                                         padding=ft.padding.symmetric(horizontal=12, vertical=8)),
+                ),
+            ] + ([
+                ft.IconButton(
+                    icon=ft.Icons.MANAGE_ACCOUNTS,
+                    icon_color=PRIMARY,
+                    icon_size=22,
+                    tooltip="Gestionar inquilinos",
+                    on_click=lambda e: _manage_tenants_dialog(),
+                ),
+            ] if is_admin else []), spacing=8),
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         ft.Container(height=8),
         ft.Column(initial_content, ref=content_area, spacing=16, scroll=ft.ScrollMode.AUTO, expand=True),

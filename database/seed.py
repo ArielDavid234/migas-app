@@ -1,6 +1,6 @@
 import hashlib
 from database.db import get_session, init_db
-from database.models import User, Category, UserRole
+from database.models import User, Category, UserRole, RentTenant
 from config import DEFAULT_CATEGORIES, HOURLY_RATE, APP_SALT
 
 
@@ -86,6 +86,16 @@ def seed_demo_workers(session):
     print("  ✓ Trabajadoras verificadas (Jennifer=worker, Daylin=admin)")
 
 
+def seed_rent_tenants(session):
+    """Crea los inquilinos iniciales si no existen."""
+    defaults = ["Elisa", "Roinier"]
+    for name in defaults:
+        if not session.query(RentTenant).filter_by(name=name).first():
+            session.add(RentTenant(name=name))
+    session.commit()
+    print("  ✓ Inquilinos de renta verificados")
+
+
 def run_seed():
     print("Inicializando base de datos...")
     init_db()
@@ -94,6 +104,7 @@ def run_seed():
         seed_categories(session)
         seed_admin(session)
         seed_demo_workers(session)
+        seed_rent_tenants(session)
         print("¡Seed completado!")
     finally:
         session.close()
