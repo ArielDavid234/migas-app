@@ -117,7 +117,7 @@ def inventario_view(page: ft.Page, user):
     _import_result_text = ft.Ref[ft.Text]()
     _import_progress = ft.Ref[ft.ProgressRing]()
 
-    def _on_import_result(e: ft.FilePickerResultEvent):
+    def _on_import_result(e):
         if not e.files:
             return
         filepath = e.files[0].path
