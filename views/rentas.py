@@ -113,23 +113,19 @@ def rentas_view(page: ft.Page, user):
                             color_scheme_key=ft.ColorSchemeKey.ON_SURFACE if active else None,
                             opacity=1.0 if active else 0.45,
                         ),
-                        ft.Tooltip(
-                            message="Desactivar" if active else "Reactivar",
-                            content=ft.IconButton(
-                                icon=ft.Icons.TOGGLE_ON if active else ft.Icons.TOGGLE_OFF,
-                                icon_color=SUCCESS if active else TEXT_SECONDARY,
-                                icon_size=20,
-                                on_click=_toggle,
-                            ),
+                        ft.IconButton(
+                            icon=ft.Icons.TOGGLE_ON if active else ft.Icons.TOGGLE_OFF,
+                            icon_color=SUCCESS if active else TEXT_SECONDARY,
+                            icon_size=20,
+                            tooltip="Desactivar" if active else "Reactivar",
+                            on_click=_toggle,
                         ),
-                        ft.Tooltip(
-                            message="Eliminar",
-                            content=ft.IconButton(
-                                icon=ft.Icons.DELETE_OUTLINE,
-                                icon_color=ERROR,
-                                icon_size=18,
-                                on_click=_delete_tenant,
-                            ),
+                        ft.IconButton(
+                            icon=ft.Icons.DELETE_OUTLINE,
+                            icon_color=ERROR,
+                            icon_size=18,
+                            tooltip="Eliminar",
+                            on_click=_delete_tenant,
                         ),
                     ], vertical_alignment=ft.CrossAxisAlignment.CENTER))
                 return rows

@@ -256,34 +256,28 @@ def salarios_view(page: ft.Page, user: User):
         if is_admin:
             if paid:
                 action_btn = ft.Row([
-                    ft.Tooltip(
-                        message="Editar pago",
-                        content=ft.IconButton(
-                            icon=ft.Icons.EDIT,
-                            icon_color=PRIMARY,
-                            icon_size=18,
-                            on_click=lambda e, w=wdata, m=month_first: _open_pay_dialog(w, m),
-                        ),
+                    ft.IconButton(
+                        icon=ft.Icons.EDIT,
+                        icon_color=PRIMARY,
+                        icon_size=18,
+                        tooltip="Editar pago",
+                        on_click=lambda e, w=wdata, m=month_first: _open_pay_dialog(w, m),
                     ),
-                    ft.Tooltip(
-                        message="Desmarcar como pagado",
-                        content=ft.IconButton(
-                            icon=ft.Icons.UNDO,
-                            icon_color=ACCENT,
-                            icon_size=18,
-                            on_click=lambda e, w=wdata, m=month_first: _unpay(w, m),
-                        ),
+                    ft.IconButton(
+                        icon=ft.Icons.UNDO,
+                        icon_color=ACCENT,
+                        icon_size=18,
+                        tooltip="Desmarcar como pagado",
+                        on_click=lambda e, w=wdata, m=month_first: _unpay(w, m),
                     ),
                 ], spacing=0)
             else:
-                action_btn = ft.Tooltip(
-                    message="Marcar como pagado",
-                    content=ft.IconButton(
-                        icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
-                        icon_color=SUCCESS,
-                        icon_size=22,
-                        on_click=lambda e, w=wdata, m=month_first: _open_pay_dialog(w, m),
-                    ),
+                action_btn = ft.IconButton(
+                    icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
+                    icon_color=SUCCESS,
+                    icon_size=22,
+                    tooltip="Marcar como pagado",
+                    on_click=lambda e, w=wdata, m=month_first: _open_pay_dialog(w, m),
                 )
         else:
             action_btn = ft.Container()
