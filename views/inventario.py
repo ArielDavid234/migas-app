@@ -12,7 +12,7 @@ from assets.styles import (
 from config import LOW_STOCK_THRESHOLD, EXPIRY_ALERT_DAYS
 from utils.responsive import is_mobile, responsive_layout, r_padding, r_font_title, r_field_width, r_side_panel_width, is_phone
 from utils.toast import show_toast
-from utils.export import export_inventory_excel
+from utils.export import export_inventory_excel, export_inventory_import_template, import_inventory_from_excel
 from utils.audit import log_action
 
 
@@ -112,6 +112,157 @@ def inventario_view(page: ft.Page, user):
 
     _dl_picker = ft.FilePicker()
     page.services.append(_dl_picker)
+
+    # ── Import picker ──
+    _import_result_text = ft.Ref[ft.Text]()
+    _import_progress = ft.Ref[ft.ProgressRing]()
+
+    def _on_import_result(e: ft.FilePickerResultEvent):
+        if not e.files:
+            return
+        filepath = e.files[0].path
+        if not filepath:
+            show_toast(page, "No se pudo leer el archivo", is_error=True)
+            return
+
+        if _import_progress.current:
+            _import_progress.current.visible = True
+            _import_progress.current.update()
+
+        try:
+            result = import_inventory_from_excel(filepath)
+        except Exception as exc:
+            show_toast(page, f"Error al importar: {exc}", is_error=True)
+            if _import_progress.current:
+                _import_progress.current.visible = False
+                _import_progress.current.update()
+            return
+
+        if _import_progress.current:
+            _import_progress.current.visible = False
+
+        msg_parts = []
+        if result["created"]:
+            msg_parts.append(f"✅ {result['created']} productos creados")
+        if result["updated"]:
+            msg_parts.append(f"🔄 {result['updated']} productos actualizados")
+        if result["skipped"]:
+            msg_parts.append(f"⏭ {result['skipped']} filas omitidas")
+        if result["errors"]:
+            msg_parts.append(f"❌ {len(result['errors'])} errores")
+
+        summary = "  |  ".join(msg_parts) if msg_parts else "Sin cambios"
+
+        if _import_result_text.current:
+            _import_result_text.current.value = summary
+            color = ERROR if result["errors"] else SUCCESS
+            _import_result_text.current.color = color
+            _import_result_text.current.update()
+
+        if result["errors"]:
+            show_toast(page,
+                       f"Importado con {len(result['errors'])} error(es). Revisa el resumen.",
+                       is_error=True)
+        else:
+            show_toast(page,
+                       f"{result['created']} creados, {result['updated']} actualizados.",
+                       is_success=True)
+        _refresh()
+
+    _import_picker = ft.FilePicker(on_result=_on_import_result)
+    page.services.append(_import_picker)
+
+    def _open_import_dialog():
+        nonlocal _import_result_text, _import_progress
+        result_label = ft.Text("", size=SMALL_SIZE, ref=_import_result_text)
+        progress = ft.ProgressRing(width=18, height=18, stroke_width=2,
+                                   visible=False, ref=_import_progress)
+
+        async def _dl_template(e):
+            try:
+                path = export_inventory_import_template()
+                import os as _os
+                with open(path, "rb") as f:
+                    data = f.read()
+                await _dl_picker.save_file(
+                    file_name=_os.path.basename(path),
+                    src_bytes=data,
+                )
+                show_toast(page, "Plantilla descargada", is_success=True)
+            except Exception as exc:
+                show_toast(page, f"Error: {exc}", is_error=True)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.UPLOAD_FILE, color=PRIMARY_DARK, size=24),
+                ft.Text("Importar Inventario desde Excel",
+                        size=SUBTITLE_SIZE, weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
+            ], spacing=8),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        "Proceso:",
+                        size=BODY_SIZE, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY,
+                    ),
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Row([ft.Icon(ft.Icons.LOOKS_ONE, color=PRIMARY, size=18),
+                                    ft.Text("Descarga la plantilla Excel",
+                                            size=BODY_SIZE, color=TEXT_PRIMARY)], spacing=8),
+                            ft.Row([ft.Icon(ft.Icons.LOOKS_TWO, color=PRIMARY, size=18),
+                                    ft.Text("Llénala con tus productos",
+                                            size=BODY_SIZE, color=TEXT_PRIMARY)], spacing=8),
+                            ft.Row([ft.Icon(ft.Icons.LOOKS_3, color=PRIMARY, size=18),
+                                    ft.Text("Sube el archivo y listo",
+                                            size=BODY_SIZE, color=TEXT_PRIMARY)], spacing=8),
+                        ], spacing=6),
+                        padding=ft.padding.only(left=8),
+                    ),
+                    ft.Text(
+                        "Si el producto ya existe (mismo nombre + categoría), se suma el stock.",
+                        size=SMALL_SIZE, color=TEXT_SECONDARY, italic=True,
+                    ),
+                    ft.Divider(height=1, color=DIVIDER_COLOR),
+                    ft.Row([
+                        ft.OutlinedButton(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.DOWNLOAD, size=16, color=PRIMARY),
+                                ft.Text("Descargar Plantilla", size=SMALL_SIZE, color=PRIMARY),
+                            ], spacing=4),
+                            on_click=_dl_template,
+                            style=ft.ButtonStyle(
+                                shape=ft.RoundedRectangleBorder(radius=6),
+                                side=ft.BorderSide(color=PRIMARY),
+                            ),
+                        ),
+                        ft.ElevatedButton(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.UPLOAD, size=16, color="white"),
+                                ft.Text("Seleccionar archivo", size=SMALL_SIZE, color="white"),
+                            ], spacing=4),
+                            bgcolor=PRIMARY,
+                            on_click=lambda e: _import_picker.pick_files(
+                                dialog_title="Seleccionar plantilla de inventario",
+                                allowed_extensions=["xlsx", "xls"],
+                                allow_multiple=False,
+                            ),
+                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
+                        ),
+                    ], spacing=12, wrap=True),
+                    ft.Row([progress, result_label], spacing=8),
+                ], spacing=12, tight=True),
+                width=420,
+            ),
+            actions=[
+                ft.TextButton(
+                    content=ft.Text("Cerrar"),
+                    on_click=lambda e: page.pop_dialog(),
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.show_dialog(dlg)
 
     async def _export_inv(e):
         try:
@@ -288,6 +439,13 @@ def inventario_view(page: ft.Page, user):
             ft.Text("Inventario", size=r_font_title(page), weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
             ft.Text("Productos, stock y alertas de vencimiento", size=BODY_SIZE, color=TEXT_SECONDARY),
         ], spacing=4, expand=True),
+        ft.ElevatedButton(
+            content=ft.Row([ft.Icon(ft.Icons.UPLOAD_FILE, size=16, color="white"),
+                            ft.Text("Importar Excel", size=SMALL_SIZE, color="white")], spacing=4),
+            bgcolor=PRIMARY, on_click=lambda e: _open_import_dialog(),
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6),
+                                 padding=ft.padding.symmetric(horizontal=12, vertical=8)),
+        ),
         ft.ElevatedButton(
             content=ft.Row([ft.Icon(ft.Icons.TABLE_CHART, size=16, color="white"),
                             ft.Text("Excel", size=SMALL_SIZE, color="white")], spacing=4),

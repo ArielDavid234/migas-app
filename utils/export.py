@@ -695,3 +695,203 @@ def export_report_excel_bytes(reports_data: list, date_val, shift_label: str) ->
     path = os.path.join(EXPORT_DIR, f"reporte_{date_str_file}_{safe_label}_{_ts()}.xlsx")
     wb.save(path)
     return path
+
+
+# ────────── Importación masiva de inventario ──────────
+
+def export_inventory_import_template() -> str:
+    """
+    Generate a blank Excel template the user can fill to bulk-import products.
+    Returns the file path.
+    Columns: Nombre*, Categoría*, Stock, Stock Mínimo, Precio Venta, Costo,
+             Consignación (Sí/No), Fecha Vencimiento (DD/MM/AAAA)
+    A second sheet lists all available categories.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    session = get_session()
+    try:
+        categories = session.query(Category).order_by(Category.name).all()
+        cat_names = [c.name for c in categories]
+    finally:
+        session.close()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Productos"
+
+    hdr_font = Font(bold=True, color="FFFFFF", size=11)
+    hdr_fill = PatternFill(start_color="0D47A1", end_color="0D47A1", fill_type="solid")
+    req_fill = PatternFill(start_color="1565C0", end_color="1565C0", fill_type="solid")  # darker = required
+    center = Alignment(horizontal="center", vertical="center")
+
+    COLUMNS = [
+        ("Nombre *",               20),
+        ("Categoría *",            22),
+        ("Stock",                  10),
+        ("Stock Mínimo",           14),
+        ("Precio Venta",           14),
+        ("Costo",                  12),
+        ("Consignación (Sí/No)",   20),
+        ("Fecha Vencimiento",      20),
+    ]
+
+    for col_idx, (title, width) in enumerate(COLUMNS, 1):
+        c = ws.cell(row=1, column=col_idx, value=title)
+        c.font = hdr_font
+        c.fill = req_fill if title.endswith("*") else hdr_fill
+        c.alignment = center
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    ws.row_dimensions[1].height = 22
+
+    # Example row
+    ws.append(["Coca-Cola 330ml", cat_names[0] if cat_names else "Bebidas", 24, 5, 1.50, 0.80, "No", ""])
+    example_font = Font(italic=True, color="757575")
+    for col_idx in range(1, 9):
+        ws.cell(row=2, column=col_idx).font = example_font
+
+    # Note row
+    ws.append([])
+    ws.append(["* Campos obligatorios.  Fecha formato DD/MM/AAAA (ej: 31/12/2026).  "
+               "Consignación: Sí o No.  Columnas vacías usan valores por defecto (Stock=0, Mín=2, Precio=0, Costo=0)."])
+    note_row = ws.max_row
+    ws.cell(note_row, 1).font = Font(italic=True, size=9, color="616161")
+    ws.merge_cells(f"A{note_row}:H{note_row}")
+
+    # Sheet 2: categories reference
+    ws2 = wb.create_sheet("Categorías Disponibles")
+    ws2.append(["Categorías disponibles (copia el nombre exacto en la columna 'Categoría')"])
+    ws2.cell(1, 1).font = Font(bold=True, size=12, color="0D47A1")
+    ws2.column_dimensions["A"].width = 40
+    for name in cat_names:
+        ws2.append([name])
+
+    path = os.path.join(EXPORT_DIR, f"plantilla_inventario_{_ts()}.xlsx")
+    wb.save(path)
+    return path
+
+
+def import_inventory_from_excel(filepath: str) -> dict:
+    """
+    Read a filled inventory template and bulk-create/update products.
+    Returns a dict: {created: int, updated: int, skipped: int, errors: list[str]}
+    Rules:
+      - Nombre + Categoría required.
+      - If product with same name (case-insensitive) already exists → update stock (add delta).
+      - Category must match an existing category (case-insensitive).
+    """
+    from openpyxl import load_workbook
+    from datetime import datetime as _dt
+
+    wb = load_workbook(filepath, read_only=True, data_only=True)
+    ws = wb.active
+
+    created = 0
+    updated = 0
+    skipped = 0
+    errors: list[str] = []
+
+    session = get_session()
+    try:
+        # Build category lookup (lowercase → Category object)
+        cat_map = {c.name.lower(): c for c in session.query(Category).all()}
+
+        rows = list(ws.iter_rows(min_row=2, values_only=True))
+        for row_num, row in enumerate(rows, start=2):
+            # Skip blank or comment rows
+            if not row or not row[0]:
+                skipped += 1
+                continue
+
+            raw_name = str(row[0]).strip()
+            raw_cat  = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+
+            # Skip the example row
+            if raw_name.startswith("Coca-Cola") and row_num == 2:
+                skipped += 1
+                continue
+
+            if not raw_name:
+                skipped += 1
+                continue
+            if not raw_cat:
+                errors.append(f"Fila {row_num}: '{raw_name}' — falta categoría.")
+                continue
+
+            cat = cat_map.get(raw_cat.lower())
+            if cat is None:
+                errors.append(f"Fila {row_num}: '{raw_name}' — categoría '{raw_cat}' no encontrada.")
+                continue
+
+            def _to_int(val, default=0):
+                try:
+                    return int(float(val)) if val not in (None, "", " ") else default
+                except (ValueError, TypeError):
+                    return default
+
+            def _to_float(val, default=0.0):
+                try:
+                    return float(val) if val not in (None, "", " ") else default
+                except (ValueError, TypeError):
+                    return default
+
+            stock     = _to_int(row[2] if len(row) > 2 else None, 0)
+            min_stock = _to_int(row[3] if len(row) > 3 else None, 2)
+            price     = _to_float(row[4] if len(row) > 4 else None, 0.0)
+            cost      = _to_float(row[5] if len(row) > 5 else None, 0.0)
+            consign_raw = str(row[6]).strip().lower() if len(row) > 6 and row[6] else "no"
+            is_consignment = consign_raw in ("sí", "si", "s", "yes", "y", "true", "1")
+
+            expiry_date = None
+            if len(row) > 7 and row[7]:
+                raw_exp = str(row[7]).strip()
+                for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d"):
+                    try:
+                        expiry_date = _dt.strptime(raw_exp, fmt).date()
+                        break
+                    except ValueError:
+                        pass
+
+            # Check if product already exists (same name, case-insensitive)
+            existing = session.query(Product).filter(
+                Product.name.ilike(raw_name),
+                Product.category_id == cat.id,
+            ).first()
+
+            if existing:
+                existing.stock += stock
+                existing.min_stock = min_stock if min_stock != 2 else existing.min_stock
+                existing.price = price if price > 0 else existing.price
+                existing.cost = cost if cost > 0 else existing.cost
+                if expiry_date:
+                    existing.expiry_date = expiry_date
+                updated += 1
+            else:
+                new_prod = Product(
+                    name=raw_name,
+                    category_id=cat.id,
+                    stock=stock,
+                    min_stock=min_stock,
+                    price=price,
+                    cost=cost,
+                    is_consignment=is_consignment,
+                    expiry_date=expiry_date,
+                )
+                session.add(new_prod)
+                created += 1
+
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        errors.append(f"Error crítico al guardar: {exc}")
+    finally:
+        session.close()
+        try:
+            wb.close()
+        except Exception:
+            pass
+
+    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors}
