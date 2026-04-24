@@ -17,6 +17,7 @@ from views.servicios import servicios_view
 from views.delivery import delivery_view
 from views.empleados import empleados_view
 from views.backup_view import backup_view
+from views.salarios_view import salarios_view
 from components.sidebar import sidebar, sidebar_drawer
 from assets.styles import FONT_FAMILY, ERROR, PRIMARY_DARK, SUBTITLE_SIZE, BODY_SIZE
 from utils.responsive import is_mobile, is_phone, get_device, r_sidebar_width, r_dialog_width, PHONE
@@ -285,6 +286,7 @@ def main(page: ft.Page):
             "servicios": lambda: servicios_view(page, user),
             "delivery": lambda: delivery_view(page, user),
             "empleados": lambda: empleados_view(page, user),
+            "salarios": lambda: salarios_view(page, user),
             "backup": lambda: backup_view(page, user),
         }
 

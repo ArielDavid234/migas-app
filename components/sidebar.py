@@ -43,6 +43,7 @@ def sidebar(page: ft.Page, user, on_navigate, on_logout, on_toggle_theme=None,
     ]
 
     if user.role == UserRole.ADMIN:
+        menu_items.append(("Salarios", ft.Icons.PAYMENTS, "salarios"))
         menu_items.append(("Empleados", ft.Icons.PEOPLE, "empleados"))
         menu_items.append(("Backups", ft.Icons.BACKUP, "backup"))
     else:
@@ -256,6 +257,7 @@ def sidebar_drawer(page: ft.Page, user, on_navigate, on_logout, on_toggle_theme=
     ]
 
     if user.role == UserRole.ADMIN:
+        menu_items.append(("Salarios", ft.Icons.PAYMENTS, "salarios"))
         menu_items.append(("Empleados", ft.Icons.PEOPLE, "empleados"))
         menu_items.append(("Backups", ft.Icons.BACKUP, "backup"))
     else:
