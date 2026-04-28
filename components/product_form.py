@@ -109,6 +109,27 @@ def product_form_dialog(page: ft.Page, on_saved, product_id: int | None = None):
         value=existing.expiry_date.strftime("%d/%m/%Y") if existing and existing.expiry_date else "",
     )
 
+    supplier_field = ft.TextField(
+        label="Compañía / Proveedor",
+        width=fw_lg,
+        expand=phone,
+        text_size=BODY_SIZE,
+        border_color=PRIMARY,
+        prefix_icon=ft.Icons.BUSINESS,
+        hint_text="ej: Distribuidora ABC",
+        value=existing.supplier if existing and existing.supplier else "",
+    )
+
+    arrival_field = ft.TextField(
+        label="Fecha de llegada (DD/MM/YYYY)",
+        width=fw_exp,
+        expand=phone,
+        text_size=BODY_SIZE,
+        border_color=PRIMARY,
+        hint_text="ej: 28/04/2026",
+        value=existing.arrival_date.strftime("%d/%m/%Y") if existing and existing.arrival_date else "",
+    )
+
     is_consignment = ft.Checkbox(
         label="Producto en consignación",
         value=existing.is_consignment if existing else False,
@@ -217,10 +238,24 @@ def product_form_dialog(page: ft.Page, on_saved, product_id: int | None = None):
                 parts = exp_val.split("/")
                 expiry = date(int(parts[2]), int(parts[1]), int(parts[0]))
             except (ValueError, IndexError):
-                status_text.value = "Fecha inválida. Formato: DD/MM/YYYY"
+                status_text.value = "Fecha de vencimiento inválida. Formato: DD/MM/YYYY"
                 status_text.color = ERROR
                 page.update()
                 return
+
+        arrival = None
+        arr_val = arrival_field.value.strip() if arrival_field.value else ""
+        if arr_val:
+            try:
+                parts = arr_val.split("/")
+                arrival = date(int(parts[2]), int(parts[1]), int(parts[0]))
+            except (ValueError, IndexError):
+                status_text.value = "Fecha de llegada inválida. Formato: DD/MM/YYYY"
+                status_text.color = ERROR
+                page.update()
+                return
+
+        supplier = supplier_field.value.strip() if supplier_field.value else None
 
         # Image is already saved to IMAGES_DIR by _pick_image; just use the stored path
         saved_image_path = _selected_image_path[0]
@@ -236,6 +271,8 @@ def product_form_dialog(page: ft.Page, on_saved, product_id: int | None = None):
                 prod.price = price
                 prod.cost = cost
                 prod.expiry_date = expiry
+                prod.arrival_date = arrival
+                prod.supplier = supplier
                 prod.is_consignment = is_consignment.value
                 prod.image_path = saved_image_path
             else:
@@ -247,6 +284,8 @@ def product_form_dialog(page: ft.Page, on_saved, product_id: int | None = None):
                     price=price,
                     cost=cost,
                     expiry_date=expiry,
+                    arrival_date=arrival,
+                    supplier=supplier,
                     is_consignment=is_consignment.value,
                     image_path=saved_image_path,
                 )
@@ -277,14 +316,15 @@ def product_form_dialog(page: ft.Page, on_saved, product_id: int | None = None):
                        vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 ft.Row([stock_field, min_stock_field], spacing=12),
                 ft.Row([price_field, cost_field], spacing=12),
-                expiry_field,
+                ft.Row([expiry_field, arrival_field], spacing=12),
+                supplier_field,
                 ft.Divider(height=1, color=DIVIDER_COLOR),
                 ft.Text("Foto del producto", size=BODY_SIZE, weight=ft.FontWeight.W_500, color=TEXT_PRIMARY),
                 image_section,
                 status_text,
             ], spacing=14, scroll=ft.ScrollMode.AUTO),
             width=dw,
-            height=None if phone else 370,
+            height=None if phone else 420,
         ),
         actions=[
             ft.TextButton(content=ft.Text("Cancelar"), on_click=lambda e: page.pop_dialog()),

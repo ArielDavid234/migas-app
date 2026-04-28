@@ -92,6 +92,8 @@ class Product(Base):
     price = Column(Float, default=0.0)
     cost = Column(Float, default=0.0)
     expiry_date = Column(Date, nullable=True)
+    arrival_date = Column(Date, nullable=True)
+    supplier = Column(String(200), nullable=True)
     image_path = Column(String(500), nullable=True)
     is_consignment = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.now)
