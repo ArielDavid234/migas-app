@@ -12,7 +12,7 @@ from assets.styles import (
 from config import LOW_STOCK_THRESHOLD, EXPIRY_ALERT_DAYS
 from utils.responsive import is_mobile, responsive_layout, r_padding, r_font_title, r_field_width, r_side_panel_width, is_phone
 from utils.toast import show_toast
-from utils.export import export_inventory_excel, export_inventory_import_template, import_inventory_from_excel, export_scan_report_template, parse_scan_report, apply_scan_report
+from utils.export import export_inventory_excel, export_inventory_import_template, import_inventory_from_excel, apply_scan_report
 from utils.audit import log_action
 
 
@@ -299,7 +299,7 @@ def inventario_view(page: ft.Page, user):
         )
         page.show_dialog(dlg)
 
-    # ── Scan Report ──
+    # ── Scan Report (OCR from image) ──
 
     _scan_picker = ft.FilePicker()
     page.services.append(_scan_picker)
@@ -309,23 +309,94 @@ def inventario_view(page: ft.Page, user):
             return
         filepath = e.files[0].path
         if not filepath:
-            show_toast(page, "No se pudo leer el archivo", is_error=True)
+            show_toast(page, "No se pudo leer la imagen", is_error=True)
             return
+
+        # Show loading toast
+        show_toast(page, "Procesando imagen con OCR…")
+
         try:
-            data = parse_scan_report(filepath)
+            from utils.ocr_scan import parse_report_image
+            data = parse_report_image(filepath)
+        except RuntimeError as exc:
+            # OCR engine not available — show detailed error dialog
+            _show_ocr_error(str(exc))
+            return
         except Exception as exc:
-            show_toast(page, f"Error al leer el reporte: {exc}", is_error=True)
+            show_toast(page, f"Error al procesar la imagen: {exc}", is_error=True)
             return
         _open_scan_preview(data)
 
     _scan_picker.on_result = _on_scan_result
 
+    def _show_ocr_error(msg: str):
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.ERROR, color=ERROR, size=24),
+                ft.Text("OCR no disponible", size=SUBTITLE_SIZE,
+                        weight=ft.FontWeight.BOLD, color=ERROR),
+            ], spacing=8),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(msg, size=BODY_SIZE, color=TEXT_PRIMARY),
+                    ft.Container(height=4),
+                    ft.Text(
+                        "Pasos para activar el escaneo OCR:",
+                        size=BODY_SIZE, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY,
+                    ),
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Row([ft.Icon(ft.Icons.LOOKS_ONE, color=PRIMARY, size=18),
+                                    ft.Text("Descarga Tesseract OCR para Windows:", size=BODY_SIZE)], spacing=8),
+                            ft.Text("  https://github.com/UB-Mannheim/tesseract/wiki",
+                                    size=SMALL_SIZE, color=ACCENT, italic=True),
+                            ft.Row([ft.Icon(ft.Icons.LOOKS_TWO, color=PRIMARY, size=18),
+                                    ft.Text("Instálalo con el instalador (acepta defaults)", size=BODY_SIZE)], spacing=8),
+                            ft.Row([ft.Icon(ft.Icons.LOOKS_3, color=PRIMARY, size=18),
+                                    ft.Text("Reinicia la aplicación", size=BODY_SIZE)], spacing=8),
+                        ], spacing=6),
+                        padding=ft.padding.only(left=8),
+                    ),
+                ], spacing=8, tight=True),
+                width=460,
+            ),
+            actions=[
+                ft.TextButton(content=ft.Text("Entendido"), on_click=lambda e: page.pop_dialog()),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.show_dialog(dlg)
+
     def _open_scan_preview(data: dict):
         rows = data["rows"]
-        parse_errors = data["parse_errors"]
+        parse_errors = data.get("parse_errors", [])
+        raw_text = data.get("raw_text", "")
 
         # ── Build preview rows ──
         preview_controls = []
+
+        # Raw OCR text (collapsible hint)
+        if raw_text.strip():
+            preview_controls.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Texto extraído por OCR:", size=SMALL_SIZE,
+                                weight=ft.FontWeight.W_500, color=TEXT_SECONDARY),
+                        ft.Container(
+                            content=ft.Text(
+                                raw_text[:800] + ("…" if len(raw_text) > 800 else ""),
+                                size=SMALL_SIZE, color=TEXT_SECONDARY, selectable=True,
+                            ),
+                            bgcolor=ft.Colors.with_opacity(0.04, PRIMARY),
+                            border_radius=6,
+                            padding=8,
+                        ),
+                    ], spacing=4),
+                    padding=ft.padding.only(bottom=4),
+                )
+            )
+            preview_controls.append(ft.Divider(height=1, color=DIVIDER_COLOR))
 
         if parse_errors:
             for err in parse_errors:
@@ -342,17 +413,25 @@ def inventario_view(page: ft.Page, user):
 
         if not rows:
             preview_controls.append(
-                ft.Text("No se encontraron filas válidas en el archivo.", size=BODY_SIZE, color=TEXT_SECONDARY, italic=True)
+                ft.Text(
+                    "No se pudieron extraer productos del reporte.\n"
+                    "Asegúrate de que la foto sea nítida y tenga formato: nombre — cantidad.",
+                    size=BODY_SIZE, color=TEXT_SECONDARY, italic=True,
+                )
             )
         else:
             # Table header
             preview_controls.append(
                 ft.Container(
                     content=ft.Row([
-                        ft.Text("Producto", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY, expand=3),
-                        ft.Text("A quitar", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY, expand=1, text_align=ft.TextAlign.CENTER),
-                        ft.Text("Stock actual", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY, expand=1, text_align=ft.TextAlign.CENTER),
-                        ft.Text("Quedaría", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY, expand=1, text_align=ft.TextAlign.CENTER),
+                        ft.Text("Producto (OCR → Inventario)", size=SMALL_SIZE,
+                                weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY, expand=3),
+                        ft.Text("Quitar", size=SMALL_SIZE, weight=ft.FontWeight.BOLD,
+                                color=TEXT_SECONDARY, expand=1, text_align=ft.TextAlign.CENTER),
+                        ft.Text("Actual", size=SMALL_SIZE, weight=ft.FontWeight.BOLD,
+                                color=TEXT_SECONDARY, expand=1, text_align=ft.TextAlign.CENTER),
+                        ft.Text("Quedaría", size=SMALL_SIZE, weight=ft.FontWeight.BOLD,
+                                color=TEXT_SECONDARY, expand=1, text_align=ft.TextAlign.CENTER),
                     ]),
                     padding=ft.padding.symmetric(horizontal=4, vertical=4),
                     bgcolor=ft.Colors.with_opacity(0.05, PRIMARY),
@@ -362,19 +441,33 @@ def inventario_view(page: ft.Page, user):
             for r in rows:
                 has_err = bool(r.get("error"))
                 row_bg = ft.Colors.with_opacity(0.06, ERROR) if has_err else "transparent"
-                remaining_color = ERROR if (r["remaining"] is not None and r["remaining"] < 0) else SUCCESS if not has_err else TEXT_SECONDARY
+                remaining_color = (
+                    ERROR if (r["remaining"] is not None and r["remaining"] < 0)
+                    else SUCCESS if not has_err else TEXT_SECONDARY
+                )
+                # Show OCR name if it differs from matched product
+                ocr_name = r.get("ocr_name", r["name"])
+                name_display = r["name"]
+                subtitle = (
+                    ft.Text(f"OCR leyó: \"{ocr_name}\"", size=SMALL_SIZE, color=ACCENT, italic=True)
+                    if ocr_name.lower() != r["name"].lower() else ft.Container(height=0)
+                )
+                error_line = (
+                    ft.Text(r["error"], size=SMALL_SIZE, color=ERROR, italic=True)
+                    if has_err else ft.Container(height=0)
+                )
                 preview_controls.append(
                     ft.Container(
                         content=ft.Row([
                             ft.Column([
-                                ft.Text(r["name"], size=BODY_SIZE, color=TEXT_PRIMARY if not has_err else ERROR, expand=True),
-                                ft.Text(r["error"], size=SMALL_SIZE, color=ERROR, italic=True) if has_err else ft.Container(height=0),
+                                ft.Text(name_display, size=BODY_SIZE,
+                                        color=TEXT_PRIMARY if not has_err else ERROR),
+                                subtitle,
+                                error_line,
                             ], spacing=1, expand=3),
-                            ft.Text(
-                                str(r["qty_remove"]),
-                                size=BODY_SIZE, color=TEXT_PRIMARY, expand=1,
-                                text_align=ft.TextAlign.CENTER, weight=ft.FontWeight.W_600,
-                            ),
+                            ft.Text(str(r["qty_remove"]), size=BODY_SIZE, color=TEXT_PRIMARY,
+                                    expand=1, text_align=ft.TextAlign.CENTER,
+                                    weight=ft.FontWeight.W_600),
                             ft.Text(
                                 str(r["current_stock"]) if r["current_stock"] is not None else "—",
                                 size=BODY_SIZE, color=TEXT_SECONDARY, expand=1,
@@ -408,7 +501,7 @@ def inventario_view(page: ft.Page, user):
             log_action(
                 user.id if hasattr(user, "id") else None,
                 "SCAN_REPORT", "Inventory", None,
-                f"{result['applied']} descuentos aplicados",
+                f"{result['applied']} descuentos aplicados desde foto OCR",
             )
             show_toast(page, f"{result['applied']} producto(s) descontados del inventario.", is_success=True)
             _refresh()
@@ -432,7 +525,7 @@ def inventario_view(page: ft.Page, user):
                     summary_text,
                 ], spacing=10, tight=True),
                 width=520,
-                height=400,
+                height=480,
             ),
             actions=[
                 ft.TextButton(content=ft.Text("Cancelar"), on_click=lambda e: page.pop_dialog()),
@@ -453,79 +546,12 @@ def inventario_view(page: ft.Page, user):
         page.show_dialog(dlg)
 
     def _open_scan_dialog():
-        """Dialog to choose: download template or upload report."""
-        async def _dl_template(e):
-            try:
-                import os as _os
-                path = export_scan_report_template()
-                with open(path, "rb") as f:
-                    data = f.read()
-                await _dl_picker.save_file(
-                    file_name=_os.path.basename(path),
-                    src_bytes=data,
-                )
-                show_toast(page, "Plantilla de reporte descargada", is_success=True)
-            except Exception as exc:
-                show_toast(page, f"Error: {exc}", is_error=True)
-
-        dlg = ft.AlertDialog(
-            modal=True,
-            title=ft.Row([
-                ft.Icon(ft.Icons.DOCUMENT_SCANNER, color=PRIMARY_DARK, size=24),
-                ft.Text("Escanear Reporte", size=SUBTITLE_SIZE,
-                        weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
-            ], spacing=8),
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Text("Descuenta stock a partir de un reporte Excel.", size=BODY_SIZE, color=TEXT_SECONDARY),
-                    ft.Container(
-                        content=ft.Column([
-                            ft.Row([ft.Icon(ft.Icons.LOOKS_ONE, color=PRIMARY, size=18),
-                                    ft.Text("Descarga la plantilla y llénala (Nombre, Cantidad)", size=BODY_SIZE, color=TEXT_PRIMARY)], spacing=8),
-                            ft.Row([ft.Icon(ft.Icons.LOOKS_TWO, color=PRIMARY, size=18),
-                                    ft.Text("Sube el reporte — verás un resumen antes de confirmar", size=BODY_SIZE, color=TEXT_PRIMARY)], spacing=8),
-                        ], spacing=6),
-                        padding=ft.padding.only(left=8),
-                    ),
-                    ft.Divider(height=1, color=DIVIDER_COLOR),
-                    ft.Row([
-                        ft.OutlinedButton(
-                            content=ft.Row([
-                                ft.Icon(ft.Icons.DOWNLOAD, size=16, color=PRIMARY),
-                                ft.Text("Descargar Plantilla", size=SMALL_SIZE, color=PRIMARY),
-                            ], spacing=4),
-                            on_click=_dl_template,
-                            style=ft.ButtonStyle(
-                                shape=ft.RoundedRectangleBorder(radius=6),
-                                side=ft.BorderSide(color=PRIMARY),
-                            ),
-                        ),
-                        ft.ElevatedButton(
-                            content=ft.Row([
-                                ft.Icon(ft.Icons.UPLOAD, size=16, color="white"),
-                                ft.Text("Subir Reporte", size=SMALL_SIZE, color="white"),
-                            ], spacing=4),
-                            bgcolor=PRIMARY,
-                            on_click=lambda e: (
-                                page.pop_dialog(),
-                                _scan_picker.pick_files(
-                                    dialog_title="Seleccionar reporte",
-                                    allowed_extensions=["xlsx", "xls"],
-                                    allow_multiple=False,
-                                ),
-                            ),
-                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
-                        ),
-                    ], spacing=12, wrap=True),
-                ], spacing=12, tight=True),
-                width=420,
-            ),
-            actions=[
-                ft.TextButton(content=ft.Text("Cerrar"), on_click=lambda e: page.pop_dialog()),
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,
+        """Open image file picker directly to scan a report photo."""
+        _scan_picker.pick_files(
+            dialog_title="Seleccionar foto del reporte",
+            allowed_extensions=["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp"],
+            allow_multiple=False,
         )
-        page.show_dialog(dlg)
 
     async def _export_inv(e):
         try:
