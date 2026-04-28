@@ -3,6 +3,7 @@ from datetime import date, datetime
 from database.db import get_session
 from database.models import Order, OrderStatus
 from components.confirm_dialog import confirm_delete_dialog
+from components.date_field import make_date_field
 from utils.responsive import is_mobile, r_padding, r_font_title, r_dialog_width
 from assets.styles import (
     PRIMARY, PRIMARY_DARK, SURFACE, SUCCESS, ERROR, ACCENT,
@@ -54,9 +55,9 @@ def pedidos_view(page: ft.Page, user):
                                   border_radius=8, text_size=BODY_SIZE, multiline=True, min_lines=2, max_lines=4)
         amount_field = ft.TextField(label="Monto ($)", value=str(existing["amount"]) if existing and existing["amount"] else "",
                                     border_radius=8, text_size=BODY_SIZE, keyboard_type=ft.KeyboardType.NUMBER)
-        date_field = ft.TextField(label="Fecha (DD/MM/YYYY)",
-                                  value=existing["order_date"].strftime("%d/%m/%Y") if existing else date.today().strftime("%d/%m/%Y"),
-                                  border_radius=8, text_size=BODY_SIZE)
+        date_field = make_date_field("Fecha",
+                                    value=existing["order_date"].strftime("%d/%m/%Y") if existing else date.today().strftime("%d/%m/%Y"),
+                                    border_radius=8, text_size=BODY_SIZE)
         error_text = ft.Text("", color=ERROR, size=SMALL_SIZE)
 
         def _save(e):

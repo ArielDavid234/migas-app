@@ -3,6 +3,7 @@ from datetime import date, datetime
 from database.db import get_session
 from database.models import User, UserRole, ClockRecord, MonthlySalaryPayment
 from components.confirm_dialog import confirm_delete_dialog
+from components.date_field import make_date_field
 from utils.responsive import r_padding, r_font_title, r_dialog_width, is_phone
 from utils.toast import show_toast
 from utils.audit import log_action
@@ -92,8 +93,8 @@ def salarios_view(page: ft.Page, user: User):
             prefix_icon=ft.Icons.ATTACH_MONEY,
             autofocus=True,
         )
-        paid_date_field = ft.TextField(
-            label="Fecha de pago (DD/MM/YYYY)",
+        paid_date_field = make_date_field(
+            "Fecha de pago",
             value=date.today().strftime("%d/%m/%Y"),
             expand=ph,
             width=r_dialog_width(page) - 48 if not ph else None,

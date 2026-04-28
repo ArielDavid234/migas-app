@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from database.db import get_session
 from database.models import Service
 from components.confirm_dialog import confirm_delete_dialog
+from components.date_field import make_date_field
 from utils.responsive import is_mobile, r_padding, r_font_title, r_dialog_width, r_field_width, is_phone
 from assets.styles import (
     PRIMARY, PRIMARY_DARK, SURFACE, SUCCESS, ERROR, ACCENT, SUBTITLE_SIZE,
@@ -50,9 +51,8 @@ def servicios_view(page: ft.Page, user):
             input_filter=ft.InputFilter(regex_string=r"[0-9.]", allow=True),
             autofocus=True,
         )
-        due_field = ft.TextField(
-            label="Fecha límite (DD/MM/YYYY)", width=r_field_width(page, 200), expand=ph, text_size=BODY_SIZE, border_color=PRIMARY,
-            hint_text="ej: 15/05/2026",
+        due_field = make_date_field(
+            "Fecha límite", width=r_field_width(page, 200), expand=ph, text_size=BODY_SIZE, border_color=PRIMARY,
         )
         status_text = ft.Text("", size=BODY_SIZE)
 

@@ -4,6 +4,7 @@ from database.db import get_session
 from database.models import User, UserRole, ClockRecord, Sale, Expense, ShiftType, Schedule, MonthlySalaryPayment
 from sqlalchemy import func
 from components.calendar_picker import calendar_picker
+from components.date_field import make_date_field
 from components.sale_form import sale_form_dialog
 from components.expense_form import expense_form_dialog
 from components.confirm_dialog import confirm_delete_dialog
@@ -236,8 +237,8 @@ def cuenta_view(page: ft.Page, user: User):
             prefix_icon=ft.Icons.ATTACH_MONEY,
             autofocus=True,
         )
-        paid_date_field = ft.TextField(
-            label="Fecha de pago (DD/MM/YYYY)",
+        paid_date_field = make_date_field(
+            "Fecha de pago",
             value=date.today().strftime("%d/%m/%Y"),
             width=r_dialog_width(page) - 48 if not ph else None,
             expand=ph,

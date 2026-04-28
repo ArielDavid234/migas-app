@@ -3,6 +3,7 @@ from datetime import date
 from database.db import get_session
 from database.models import FuelDelivery
 from components.calendar_picker import calendar_picker
+from components.date_field import make_date_field
 from components.confirm_dialog import confirm_delete_dialog
 from utils.responsive import is_mobile, responsive_layout, r_padding, r_font_title, r_calendar_width, r_dialog_width, r_field_width, is_phone
 from assets.styles import (
@@ -56,8 +57,8 @@ def delivery_view(page: ft.Page, user):
             ex_data = None
 
         ph = is_phone(page)
-        date_field = ft.TextField(
-            label="Fecha (DD/MM/YYYY)", width=r_field_width(page, 200), expand=ph, text_size=BODY_SIZE, border_color=PRIMARY,
+        date_field = make_date_field(
+            "Fecha", width=r_field_width(page, 200), expand=ph, text_size=BODY_SIZE, border_color=PRIMARY,
             value=ex_data["delivery_date"].strftime("%d/%m/%Y") if ex_data else date.today().strftime("%d/%m/%Y"),
             autofocus=True,
         )

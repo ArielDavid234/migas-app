@@ -10,6 +10,7 @@ from assets.styles import (
     TEXT_PRIMARY, TEXT_SECONDARY, SUBTITLE_SIZE, BODY_SIZE, SMALL_SIZE, DIVIDER_COLOR,
 )
 from utils.responsive import r_dialog_width, r_field_width, is_phone
+from components.date_field import make_date_field
 
 IMAGES_DIR = os.path.join(DATA_DIR, "product_images")
 os.makedirs(IMAGES_DIR, exist_ok=True)
@@ -99,13 +100,12 @@ def product_form_dialog(page: ft.Page, on_saved, product_id: int | None = None):
         value=f"{existing.cost:.2f}" if existing else "",
     )
 
-    expiry_field = ft.TextField(
-        label="Vencimiento (DD/MM/YYYY)",
+    expiry_field = make_date_field(
+        "Vencimiento",
         width=fw_exp,
         expand=phone,
         text_size=BODY_SIZE,
         border_color=PRIMARY,
-        hint_text="ej: 15/06/2026",
         value=existing.expiry_date.strftime("%d/%m/%Y") if existing and existing.expiry_date else "",
     )
 
@@ -120,13 +120,12 @@ def product_form_dialog(page: ft.Page, on_saved, product_id: int | None = None):
         value=existing.supplier if existing and existing.supplier else "",
     )
 
-    arrival_field = ft.TextField(
-        label="Fecha de llegada (DD/MM/YYYY)",
+    arrival_field = make_date_field(
+        "Fecha de llegada",
         width=fw_exp,
         expand=phone,
         text_size=BODY_SIZE,
         border_color=PRIMARY,
-        hint_text="ej: 28/04/2026",
         value=existing.arrival_date.strftime("%d/%m/%Y") if existing and existing.arrival_date else "",
     )
 
