@@ -23,8 +23,31 @@ SessionLocal = sessionmaker(bind=engine)
 
 
 def init_db():
-    """Crea todas las tablas si no existen."""
+    """Crea todas las tablas si no existen y aplica migraciones ligeras."""
     Base.metadata.create_all(bind=engine)
+    _migrate()
+
+
+def _migrate():
+    """Agrega columnas nuevas a tablas existentes (SQLite no soporta ALTER TABLE IF NOT EXISTS)."""
+    migrations = [
+        ("products", "arrival_date",    "DATE"),
+        ("products", "supplier",        "VARCHAR(200)"),
+        ("products", "status",          "VARCHAR(20) NOT NULL DEFAULT 'active'"),
+        ("products", "approved_by_id",  "INTEGER"),
+        ("products", "approved_at",     "DATETIME"),
+    ]
+    with engine.connect() as conn:
+        for table, column, col_type in migrations:
+            try:
+                conn.execute(
+                    __import__("sqlalchemy").text(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
+                    )
+                )
+                conn.commit()
+            except Exception:
+                pass  # columna ya existe
 
 
 def get_session() -> Session:

@@ -33,6 +33,11 @@ class OrderStatus(enum.Enum):
     RECEIVED = "received"
 
 
+class ProductStatus(enum.Enum):
+    PENDING = "pending"   # en espera de fecha de llegada y/o autorización admin
+    ACTIVE  = "active"    # aprobado oficialmente
+
+
 # ---------- Users & Auth ----------
 
 class User(Base):
@@ -96,9 +101,13 @@ class Product(Base):
     supplier = Column(String(200), nullable=True)
     image_path = Column(String(500), nullable=True)
     is_consignment = Column(Boolean, default=False)
+    status = Column(SAEnum(ProductStatus), default=ProductStatus.PENDING, nullable=False)
+    approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
     category = relationship("Category", back_populates="products")
+    approved_by = relationship("User", foreign_keys=[approved_by_id])
 
 
 # ---------- Sales & Expenses ----------

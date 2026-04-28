@@ -3,7 +3,7 @@ import os
 import shutil
 from datetime import date
 from database.db import get_session
-from database.models import Product, Category
+from database.models import Product, Category, ProductStatus
 from config import DATA_DIR
 from assets.styles import (
     PRIMARY, PRIMARY_DARK, SURFACE, SUCCESS, ERROR, ACCENT,
@@ -288,6 +288,7 @@ def product_form_dialog(page: ft.Page, on_saved, product_id: int | None = None):
                     supplier=supplier,
                     is_consignment=is_consignment.value,
                     image_path=saved_image_path,
+                    status=ProductStatus.PENDING,
                 )
                 session.add(prod)
             session.commit()

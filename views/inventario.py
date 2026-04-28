@@ -2,7 +2,7 @@ import flet as ft
 import os
 from datetime import date, timedelta
 from database.db import get_session
-from database.models import Product, Category
+from database.models import Product, Category, ProductStatus, UserRole
 from components.product_form import product_form_dialog, adjust_stock_dialog
 from components.confirm_dialog import confirm_delete_dialog
 from assets.styles import (
@@ -38,6 +38,7 @@ def inventario_view(page: ft.Page, user):
         session = get_session()
         try:
             q = session.query(Product).join(Category)
+            q = q.filter(Product.status == ProductStatus.ACTIVE)
             if search:
                 q = q.filter(Product.name.ilike(f"%{search}%"))
             if category_id:
@@ -57,6 +58,30 @@ def inventario_view(page: ft.Page, user):
                     "expiry_date": p.expiry_date,
                     "is_consignment": p.is_consignment,
                     "image_path": p.image_path,
+                })
+            return result
+        finally:
+            session.close()
+
+    def _load_pending_products():
+        session = get_session()
+        try:
+            pending = session.query(Product).join(Category).filter(
+                Product.status == ProductStatus.PENDING
+            ).order_by(Product.created_at.desc()).all()
+            result = []
+            for p in pending:
+                result.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "category_name": p.category.name,
+                    "stock": p.stock,
+                    "price": p.price,
+                    "cost": p.cost,
+                    "supplier": p.supplier,
+                    "arrival_date": p.arrival_date,
+                    "expiry_date": p.expiry_date,
+                    "is_consignment": p.is_consignment,
                 })
             return result
         finally:
@@ -90,6 +115,7 @@ def inventario_view(page: ft.Page, user):
     def _refresh():
         _refresh_products()
         _refresh_alerts()
+        _refresh_pending()
 
     def _refresh_products():
         cat_val = category_filter.current.value
@@ -106,6 +132,14 @@ def inventario_view(page: ft.Page, user):
         alerts_col.current.controls.clear()
         alerts_col.current.controls.extend(_build_alerts())
         alerts_col.current.update()
+
+    def _refresh_pending():
+        if pending_col.current is None:
+            return
+        items = _build_pending_section()
+        pending_col.current.controls.clear()
+        pending_col.current.controls.extend(items)
+        pending_col.current.update()
 
     def _add_product(e):
         product_form_dialog(page, on_saved=_refresh)
@@ -299,7 +333,88 @@ def inventario_view(page: ft.Page, user):
     def _adjust_stock(pid: int, name: str, stock: int):
         adjust_stock_dialog(page, pid, name, stock, on_saved=_refresh)
 
+    is_admin = user.role == UserRole.ADMIN
+
+    def _approve_product(pid: int, name: str):
+        from datetime import datetime as _dt
+        session = get_session()
+        try:
+            prod = session.query(Product).get(pid)
+            if prod and prod.status == ProductStatus.PENDING:
+                prod.status = ProductStatus.ACTIVE
+                prod.approved_by_id = user.id if hasattr(user, "id") else None
+                prod.approved_at = _dt.now()
+                session.commit()
+                show_toast(page, f"'{name}' autorizado y agregado al inventario.", is_success=True)
+        finally:
+            session.close()
+        _refresh()
+
     # ── UI builders ──
+
+    def _pending_card(p):
+        today = date.today()
+        arrival = p["arrival_date"]
+        can_approve = arrival is None or arrival <= today
+
+        arrival_text = arrival.strftime("%d/%m/%Y") if arrival else "No especificada"
+        arrival_color = TEXT_SECONDARY
+        days_left_text = ""
+        if arrival and arrival > today:
+            days_left = (arrival - today).days
+            arrival_color = ACCENT
+            days_left_text = f"  (faltan {days_left} día{'s' if days_left != 1 else ''})"
+
+        approve_btn = ft.ElevatedButton(
+            content=ft.Row([
+                ft.Icon(ft.Icons.CHECK_CIRCLE, size=16, color="white"),
+                ft.Text("Autorizar", size=SMALL_SIZE, color="white"),
+            ], spacing=4),
+            bgcolor=SUCCESS if can_approve else TEXT_SECONDARY,
+            disabled=not can_approve,
+            tooltip="Autorizar y agregar al inventario" if can_approve else f"Disponible el {arrival_text}",
+            on_click=lambda e, pid=p["id"], nm=p["name"]: _approve_product(pid, nm),
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=6),
+                padding=ft.padding.symmetric(horizontal=10, vertical=6),
+            ),
+        ) if is_admin else ft.Container()
+
+        supplier_row = ft.Row([
+            ft.Icon(ft.Icons.BUSINESS, size=14, color=TEXT_SECONDARY),
+            ft.Text(p["supplier"] or "Sin proveedor", size=SMALL_SIZE, color=TEXT_SECONDARY),
+        ], spacing=4) if p.get("supplier") else ft.Container()
+
+        return ft.Container(
+            content=ft.Row([
+                ft.Container(
+                    content=ft.Text(p["category_name"][:3].upper(), size=10,
+                                   color="white", weight=ft.FontWeight.BOLD,
+                                   text_align=ft.TextAlign.CENTER),
+                    width=36, height=36, border_radius=8,
+                    bgcolor=ACCENT, alignment=ft.Alignment(0, 0),
+                ),
+                ft.Column([
+                    ft.Text(p["name"], size=BODY_SIZE, weight=ft.FontWeight.W_500, color=TEXT_PRIMARY),
+                    ft.Text(p["category_name"], size=SMALL_SIZE, color=TEXT_SECONDARY),
+                    supplier_row,
+                ], spacing=2, expand=True),
+                ft.Column([
+                    ft.Row([
+                        ft.Icon(ft.Icons.LOCAL_SHIPPING, size=13, color=arrival_color),
+                        ft.Text(f"Llegada: {arrival_text}{days_left_text}",
+                                size=SMALL_SIZE, color=arrival_color),
+                    ], spacing=4),
+                    ft.Text(f"Stock: {p['stock']}  |  ${p['price']:,.2f}",
+                            size=SMALL_SIZE, color=TEXT_SECONDARY),
+                ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END),
+                approve_btn,
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=12, border_radius=10, bgcolor=SURFACE,
+            border=ft.border.all(1, ACCENT if not can_approve else DIVIDER_COLOR),
+        )
+
+    pending_col = ft.Ref[ft.Column]()
 
     def _product_row(p):
         stock_color = ERROR if p["stock"] <= p["min_stock"] else TEXT_PRIMARY
@@ -375,6 +490,26 @@ def inventario_view(page: ft.Page, user):
                 padding=20, alignment=ft.Alignment(0, 0),
             )]
         return [_product_row(p) for p in products]
+
+    def _build_pending_section():
+        pending = _load_pending_products()
+        if not pending:
+            return []
+        items = [
+            ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.PENDING_ACTIONS, color=ACCENT, size=18),
+                    ft.Text(
+                        f"Productos pendientes de autorización ({len(pending)})",
+                        size=BODY_SIZE, weight=ft.FontWeight.W_600, color=ACCENT,
+                    ),
+                ], spacing=8),
+                padding=ft.padding.only(top=8, bottom=4),
+            ),
+        ]
+        items.extend([_pending_card(p) for p in pending])
+        items.append(ft.Divider(height=1, color=DIVIDER_COLOR))
+        return items
 
     def _build_alerts():
         low, expiring, expired = _load_alerts()
@@ -480,11 +615,13 @@ def inventario_view(page: ft.Page, user):
 
     initial_products = _build_product_list()
     initial_alerts = _build_alerts()
+    initial_pending = _build_pending_section()
 
     main_col = ft.Column([
         header,
         filters_row,
         ft.Container(height=8),
+        ft.Column(initial_pending, ref=pending_col, spacing=6),
         ft.Text(f"{len(initial_products)} productos", ref=count_text, size=SMALL_SIZE, color=TEXT_SECONDARY),
         ft.Column(initial_products, ref=products_list, spacing=6, scroll=ft.ScrollMode.AUTO, expand=True),
     ], expand=True, spacing=12)
