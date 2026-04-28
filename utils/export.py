@@ -895,3 +895,147 @@ def import_inventory_from_excel(filepath: str) -> dict:
             pass
 
     return {"created": created, "updated": updated, "skipped": skipped, "errors": errors}
+
+
+# ────────── Escaneo de reportes (descuento de stock) ──────────
+
+def export_scan_report_template() -> str:
+    """
+    Generate a blank Excel template for the scan-report feature.
+    Columns: Nombre del Producto*, Cantidad a descontar*
+    Returns the file path.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Reporte"
+
+    hdr_font = Font(bold=True, color="FFFFFF", size=11)
+    hdr_fill = PatternFill(start_color="1565C0", end_color="1565C0", fill_type="solid")
+    center = Alignment(horizontal="center", vertical="center")
+
+    COLUMNS = [("Nombre del Producto *", 30), ("Cantidad a Descontar *", 24)]
+    for col_idx, (title, width) in enumerate(COLUMNS, 1):
+        c = ws.cell(row=1, column=col_idx, value=title)
+        c.font = hdr_font
+        c.fill = hdr_fill
+        c.alignment = center
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+    ws.row_dimensions[1].height = 22
+
+    # Example rows
+    example_font = Font(italic=True, color="757575")
+    examples = [("Coca-Cola 330ml", 5), ("Agua 500ml", 12), ("Aceite Motor 4L", 2)]
+    for row_idx, (nm, qty) in enumerate(examples, 2):
+        ws.cell(row_idx, 1, nm).font = example_font
+        ws.cell(row_idx, 2, qty).font = example_font
+
+    note_row = len(examples) + 3
+    ws.cell(note_row, 1,
+            "* El nombre debe coincidir exactamente con el registrado en el inventario (sin importar mayúsculas).")
+    ws.cell(note_row, 1).font = Font(italic=True, size=9, color="616161")
+    ws.merge_cells(f"A{note_row}:B{note_row}")
+
+    path = os.path.join(EXPORT_DIR, f"plantilla_reporte_{_ts()}.xlsx")
+    wb.save(path)
+    return path
+
+
+def parse_scan_report(filepath: str) -> dict:
+    """
+    Read a scan-report Excel and return preview data.
+    Returns:
+      {
+        "rows": [{"product_id", "name", "qty_remove", "current_stock", "remaining",
+                  "error": str|None}],
+        "parse_errors": [str],
+      }
+    Each row has an "error" field if the product was not found or qty is invalid.
+    Does NOT modify the DB — caller applies changes after user confirmation.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(filepath, read_only=True, data_only=True)
+    ws = wb.active
+
+    rows = []
+    parse_errors: list[str] = []
+
+    session = get_session()
+    try:
+        for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            if not row or not row[0]:
+                continue
+            raw_name = str(row[0]).strip()
+            if not raw_name:
+                continue
+
+            # Quantity
+            try:
+                qty = int(float(str(row[1]).strip())) if len(row) > 1 and row[1] not in (None, "") else 0
+            except (ValueError, TypeError):
+                parse_errors.append(f"Fila {row_num}: cantidad inválida «{row[1]}»")
+                continue
+
+            if qty <= 0:
+                parse_errors.append(f"Fila {row_num}: la cantidad debe ser mayor a 0")
+                continue
+
+            prod = session.query(Product).filter(
+                Product.name.ilike(raw_name),
+                Product.status.in_(["active", "ACTIVE"]),
+            ).first()
+
+            if prod is None:
+                rows.append({
+                    "product_id": None,
+                    "name": raw_name,
+                    "qty_remove": qty,
+                    "current_stock": None,
+                    "remaining": None,
+                    "error": "Producto no encontrado en el inventario",
+                })
+            else:
+                remaining = prod.stock - qty
+                rows.append({
+                    "product_id": prod.id,
+                    "name": prod.name,
+                    "qty_remove": qty,
+                    "current_stock": prod.stock,
+                    "remaining": remaining,
+                    "error": "Stock insuficiente" if remaining < 0 else None,
+                })
+    finally:
+        session.close()
+        try:
+            wb.close()
+        except Exception:
+            pass
+
+    return {"rows": rows, "parse_errors": parse_errors}
+
+
+def apply_scan_report(rows: list, applied_by_id) -> dict:
+    """
+    Apply confirmed scan-report rows: deduct stock from products.
+    Skips rows with errors. Returns {applied: int, skipped: int}.
+    """
+    applied = 0
+    skipped = 0
+    session = get_session()
+    try:
+        for r in rows:
+            if r.get("error") or r["product_id"] is None:
+                skipped += 1
+                continue
+            prod = session.query(Product).get(r["product_id"])
+            if prod:
+                prod.stock = max(0, prod.stock - r["qty_remove"])
+                applied += 1
+        session.commit()
+    finally:
+        session.close()
+    return {"applied": applied, "skipped": skipped}

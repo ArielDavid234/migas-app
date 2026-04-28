@@ -12,7 +12,7 @@ from assets.styles import (
 from config import LOW_STOCK_THRESHOLD, EXPIRY_ALERT_DAYS
 from utils.responsive import is_mobile, responsive_layout, r_padding, r_font_title, r_field_width, r_side_panel_width, is_phone
 from utils.toast import show_toast
-from utils.export import export_inventory_excel, export_inventory_import_template, import_inventory_from_excel
+from utils.export import export_inventory_excel, export_inventory_import_template, import_inventory_from_excel, export_scan_report_template, parse_scan_report, apply_scan_report
 from utils.audit import log_action
 
 
@@ -299,6 +299,234 @@ def inventario_view(page: ft.Page, user):
         )
         page.show_dialog(dlg)
 
+    # ── Scan Report ──
+
+    _scan_picker = ft.FilePicker()
+    page.services.append(_scan_picker)
+
+    def _on_scan_result(e):
+        if not e.files:
+            return
+        filepath = e.files[0].path
+        if not filepath:
+            show_toast(page, "No se pudo leer el archivo", is_error=True)
+            return
+        try:
+            data = parse_scan_report(filepath)
+        except Exception as exc:
+            show_toast(page, f"Error al leer el reporte: {exc}", is_error=True)
+            return
+        _open_scan_preview(data)
+
+    _scan_picker.on_result = _on_scan_result
+
+    def _open_scan_preview(data: dict):
+        rows = data["rows"]
+        parse_errors = data["parse_errors"]
+
+        # ── Build preview rows ──
+        preview_controls = []
+
+        if parse_errors:
+            for err in parse_errors:
+                preview_controls.append(
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.WARNING, color=ACCENT, size=14),
+                            ft.Text(err, size=SMALL_SIZE, color=ACCENT),
+                        ], spacing=6),
+                        padding=ft.padding.symmetric(vertical=2),
+                    )
+                )
+            preview_controls.append(ft.Divider(height=1, color=DIVIDER_COLOR))
+
+        if not rows:
+            preview_controls.append(
+                ft.Text("No se encontraron filas válidas en el archivo.", size=BODY_SIZE, color=TEXT_SECONDARY, italic=True)
+            )
+        else:
+            # Table header
+            preview_controls.append(
+                ft.Container(
+                    content=ft.Row([
+                        ft.Text("Producto", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY, expand=3),
+                        ft.Text("A quitar", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY, expand=1, text_align=ft.TextAlign.CENTER),
+                        ft.Text("Stock actual", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY, expand=1, text_align=ft.TextAlign.CENTER),
+                        ft.Text("Quedaría", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY, expand=1, text_align=ft.TextAlign.CENTER),
+                    ]),
+                    padding=ft.padding.symmetric(horizontal=4, vertical=4),
+                    bgcolor=ft.Colors.with_opacity(0.05, PRIMARY),
+                    border_radius=6,
+                )
+            )
+            for r in rows:
+                has_err = bool(r.get("error"))
+                row_bg = ft.Colors.with_opacity(0.06, ERROR) if has_err else "transparent"
+                remaining_color = ERROR if (r["remaining"] is not None and r["remaining"] < 0) else SUCCESS if not has_err else TEXT_SECONDARY
+                preview_controls.append(
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Column([
+                                ft.Text(r["name"], size=BODY_SIZE, color=TEXT_PRIMARY if not has_err else ERROR, expand=True),
+                                ft.Text(r["error"], size=SMALL_SIZE, color=ERROR, italic=True) if has_err else ft.Container(height=0),
+                            ], spacing=1, expand=3),
+                            ft.Text(
+                                str(r["qty_remove"]),
+                                size=BODY_SIZE, color=TEXT_PRIMARY, expand=1,
+                                text_align=ft.TextAlign.CENTER, weight=ft.FontWeight.W_600,
+                            ),
+                            ft.Text(
+                                str(r["current_stock"]) if r["current_stock"] is not None else "—",
+                                size=BODY_SIZE, color=TEXT_SECONDARY, expand=1,
+                                text_align=ft.TextAlign.CENTER,
+                            ),
+                            ft.Text(
+                                str(r["remaining"]) if r["remaining"] is not None else "—",
+                                size=BODY_SIZE, color=remaining_color, expand=1,
+                                text_align=ft.TextAlign.CENTER, weight=ft.FontWeight.W_600,
+                            ),
+                        ]),
+                        padding=ft.padding.symmetric(horizontal=4, vertical=6),
+                        bgcolor=row_bg,
+                        border_radius=6,
+                    )
+                )
+
+        valid_rows = [r for r in rows if not r.get("error")]
+        has_valid = len(valid_rows) > 0
+        error_count = len([r for r in rows if r.get("error")])
+
+        summary_text = ft.Text(
+            f"{len(valid_rows)} producto(s) se descontarán del inventario." +
+            (f"  {error_count} fila(s) con errores serán ignoradas." if error_count else ""),
+            size=SMALL_SIZE, color=TEXT_SECONDARY, italic=True,
+        )
+
+        def _confirm(e):
+            page.pop_dialog()
+            result = apply_scan_report(valid_rows, user.id if hasattr(user, "id") else None)
+            log_action(
+                user.id if hasattr(user, "id") else None,
+                "SCAN_REPORT", "Inventory", None,
+                f"{result['applied']} descuentos aplicados",
+            )
+            show_toast(page, f"{result['applied']} producto(s) descontados del inventario.", is_success=True)
+            _refresh()
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.DOCUMENT_SCANNER, color=PRIMARY_DARK, size=24),
+                ft.Text("Previsualización del Reporte",
+                        size=SUBTITLE_SIZE, weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
+            ], spacing=8),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        "Revisa los cambios antes de aplicarlos. Los productos con error serán ignorados.",
+                        size=SMALL_SIZE, color=TEXT_SECONDARY,
+                    ),
+                    ft.Divider(height=1, color=DIVIDER_COLOR),
+                    ft.Column(preview_controls, spacing=4, scroll=ft.ScrollMode.AUTO),
+                    ft.Divider(height=1, color=DIVIDER_COLOR),
+                    summary_text,
+                ], spacing=10, tight=True),
+                width=520,
+                height=400,
+            ),
+            actions=[
+                ft.TextButton(content=ft.Text("Cancelar"), on_click=lambda e: page.pop_dialog()),
+                ft.ElevatedButton(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.CHECK_CIRCLE, size=16, color="white"),
+                        ft.Text("Aplicar descuentos", color="white", size=BODY_SIZE),
+                    ], spacing=6),
+                    bgcolor=PRIMARY if has_valid else TEXT_SECONDARY,
+                    disabled=not has_valid,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8),
+                                         padding=ft.padding.symmetric(horizontal=16, vertical=10)),
+                    on_click=_confirm,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.show_dialog(dlg)
+
+    def _open_scan_dialog():
+        """Dialog to choose: download template or upload report."""
+        async def _dl_template(e):
+            try:
+                import os as _os
+                path = export_scan_report_template()
+                with open(path, "rb") as f:
+                    data = f.read()
+                await _dl_picker.save_file(
+                    file_name=_os.path.basename(path),
+                    src_bytes=data,
+                )
+                show_toast(page, "Plantilla de reporte descargada", is_success=True)
+            except Exception as exc:
+                show_toast(page, f"Error: {exc}", is_error=True)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.DOCUMENT_SCANNER, color=PRIMARY_DARK, size=24),
+                ft.Text("Escanear Reporte", size=SUBTITLE_SIZE,
+                        weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
+            ], spacing=8),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Descuenta stock a partir de un reporte Excel.", size=BODY_SIZE, color=TEXT_SECONDARY),
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Row([ft.Icon(ft.Icons.LOOKS_ONE, color=PRIMARY, size=18),
+                                    ft.Text("Descarga la plantilla y llénala (Nombre, Cantidad)", size=BODY_SIZE, color=TEXT_PRIMARY)], spacing=8),
+                            ft.Row([ft.Icon(ft.Icons.LOOKS_TWO, color=PRIMARY, size=18),
+                                    ft.Text("Sube el reporte — verás un resumen antes de confirmar", size=BODY_SIZE, color=TEXT_PRIMARY)], spacing=8),
+                        ], spacing=6),
+                        padding=ft.padding.only(left=8),
+                    ),
+                    ft.Divider(height=1, color=DIVIDER_COLOR),
+                    ft.Row([
+                        ft.OutlinedButton(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.DOWNLOAD, size=16, color=PRIMARY),
+                                ft.Text("Descargar Plantilla", size=SMALL_SIZE, color=PRIMARY),
+                            ], spacing=4),
+                            on_click=_dl_template,
+                            style=ft.ButtonStyle(
+                                shape=ft.RoundedRectangleBorder(radius=6),
+                                side=ft.BorderSide(color=PRIMARY),
+                            ),
+                        ),
+                        ft.ElevatedButton(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.UPLOAD, size=16, color="white"),
+                                ft.Text("Subir Reporte", size=SMALL_SIZE, color="white"),
+                            ], spacing=4),
+                            bgcolor=PRIMARY,
+                            on_click=lambda e: (
+                                page.pop_dialog(),
+                                _scan_picker.pick_files(
+                                    dialog_title="Seleccionar reporte",
+                                    allowed_extensions=["xlsx", "xls"],
+                                    allow_multiple=False,
+                                ),
+                            ),
+                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
+                        ),
+                    ], spacing=12, wrap=True),
+                ], spacing=12, tight=True),
+                width=420,
+            ),
+            actions=[
+                ft.TextButton(content=ft.Text("Cerrar"), on_click=lambda e: page.pop_dialog()),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.show_dialog(dlg)
+
     async def _export_inv(e):
         try:
             import os
@@ -579,6 +807,13 @@ def inventario_view(page: ft.Page, user):
             content=ft.Row([ft.Icon(ft.Icons.UPLOAD_FILE, size=16, color="white"),
                             ft.Text("Importar Excel", size=SMALL_SIZE, color="white")], spacing=4),
             bgcolor=PRIMARY, on_click=lambda e: _open_import_dialog(),
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6),
+                                 padding=ft.padding.symmetric(horizontal=12, vertical=8)),
+        ),
+        ft.ElevatedButton(
+            content=ft.Row([ft.Icon(ft.Icons.DOCUMENT_SCANNER, size=16, color="white"),
+                            ft.Text("Escanear Reporte", size=SMALL_SIZE, color="white")], spacing=4),
+            bgcolor="#6A1B9A", on_click=lambda e: _open_scan_dialog(),
             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6),
                                  padding=ft.padding.symmetric(horizontal=12, vertical=8)),
         ),
