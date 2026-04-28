@@ -313,13 +313,14 @@ def product_form_dialog(page: ft.Page, on_saved, product_id: int | None = None):
         content=ft.Container(
             content=ft.Column([
                 name_field,
-                ft.Row([category_dd, is_consignment], spacing=16,
+                ft.Row([category_dd], spacing=16,
                        vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 ft.Row([stock_field, min_stock_field], spacing=12),
                 ft.Row([price_field, cost_field], spacing=12),
                 ft.Row([expiry_field, arrival_field], spacing=12),
                 supplier_field,
                 ft.Divider(height=1, color=DIVIDER_COLOR),
+                is_consignment,
                 ft.Text("Foto del producto", size=BODY_SIZE, weight=ft.FontWeight.W_500, color=TEXT_PRIMARY),
                 image_section,
                 status_text,
