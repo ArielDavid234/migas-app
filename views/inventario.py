@@ -306,12 +306,27 @@ def inventario_view(page: ft.Page, user):
     def _on_scan_result(e):
         if not e.files:
             return
-        filepath = e.files[0].path
-        if not filepath:
-            show_toast(page, "No se pudo leer la imagen", is_error=True)
-            return
+        file = e.files[0]
+        filepath = file.path
 
-        # Show loading toast
+        # En modo web, path es None — usar bytes del archivo
+        tmp_path = None
+        if not filepath:
+            if not file.bytes:
+                show_toast(page, "No se pudo leer la imagen", is_error=True)
+                return
+            import tempfile
+            import os as _os
+            suffix = _os.path.splitext(file.name or "img.jpg")[1] or ".jpg"
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(file.bytes)
+                    tmp_path = tmp.name
+                filepath = tmp_path
+            except Exception as exc:
+                show_toast(page, f"Error guardando imagen: {exc}", is_error=True)
+                return
+
         show_toast(page, "Procesando imagen con OCR…")
 
         try:
@@ -324,6 +339,13 @@ def inventario_view(page: ft.Page, user):
         except Exception as exc:
             show_toast(page, f"Error al procesar la imagen: {exc}", is_error=True)
             return
+        finally:
+            if tmp_path:
+                try:
+                    import os as _os2
+                    _os2.unlink(tmp_path)
+                except Exception:
+                    pass
         _open_scan_preview(data)
 
     _scan_picker.on_result = _on_scan_result
