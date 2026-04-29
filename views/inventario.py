@@ -567,9 +567,9 @@ def inventario_view(page: ft.Page, user):
         )
         page.show_dialog(dlg)
 
-    def _open_scan_dialog():
+    async def _open_scan_dialog():
         """Open image file picker directly to scan a report photo."""
-        _scan_picker.pick_files(
+        await _scan_picker.pick_files(
             dialog_title="Seleccionar foto del reporte",
             allowed_extensions=["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp"],
             allow_multiple=False,
@@ -861,7 +861,7 @@ def inventario_view(page: ft.Page, user):
         ft.ElevatedButton(
             content=ft.Row([ft.Icon(ft.Icons.DOCUMENT_SCANNER, size=16, color="white"),
                             ft.Text("Escanear Reporte", size=SMALL_SIZE, color="white")], spacing=4),
-            bgcolor="#6A1B9A", on_click=lambda e: _open_scan_dialog(),
+            bgcolor="#6A1B9A", on_click=lambda e: page.run_task(_open_scan_dialog),
             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6),
                                  padding=ft.padding.symmetric(horizontal=12, vertical=8)),
         ),
