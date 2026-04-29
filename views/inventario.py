@@ -302,7 +302,6 @@ def inventario_view(page: ft.Page, user):
     # ── Scan Report (OCR from image) ──
 
     _scan_picker = ft.FilePicker()
-    page.services.append(_scan_picker)
 
     def _on_scan_result(e):
         if not e.files:
@@ -328,6 +327,7 @@ def inventario_view(page: ft.Page, user):
         _open_scan_preview(data)
 
     _scan_picker.on_result = _on_scan_result
+    page.services.append(_scan_picker)
 
     def _show_ocr_error(msg: str):
         dlg = ft.AlertDialog(
