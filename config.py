@@ -41,6 +41,10 @@ EXPIRY_ALERT_DAYS = 7
 # Umbral mínimo de stock para alertar
 LOW_STOCK_THRESHOLD = 2
 
+# ── OCR.space API (gratis, funciona en iOS/macOS/Windows) ──
+# https://ocr.space/ocrapi/freekey
+OCR_SPACE_API_KEY = "K84112862188957"
+
 # Marcas de cigarros para reportes
 DEFAULT_CIGARETTE_BRANDS = [
     "Marlboro Red", "Marlboro Gold", "Marlboro Menthol",
