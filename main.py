@@ -1,4 +1,5 @@
 import traceback
+from datetime import datetime
 import flet as ft
 from database.db import init_db, get_session
 from database.seed import run_seed
@@ -111,22 +112,21 @@ def main(page: ft.Page):
         current_user = user
         log_action(user.id, "LOGIN", "User", user.id, f"{user.name} inició sesión")
 
-        # Workers must clock in first
+        # Auto clock-in worker on login
         if user.role == UserRole.WORKER:
             session = get_session()
             try:
                 active = session.query(ClockRecord).filter_by(
                     user_id=user.id, clock_out=None
                 ).first()
-                if active:
-                    show_main_app(user)
-                else:
-                    show_clock_screen(user)
+                if not active:
+                    record = ClockRecord(user_id=user.id, clock_in=datetime.now())
+                    session.add(record)
+                    session.commit()
             finally:
                 session.close()
-        else:
-            # Admin goes directly to dashboard
-            show_main_app(user)
+
+        show_main_app(user)
 
     def show_clock_screen(user: User):
         page.controls.clear()
@@ -260,10 +260,19 @@ def main(page: ft.Page):
             """Show confirmation dialog before logging out."""
             def _do_logout():
                 log_action(user.id, "LOGOUT", "User", user.id, f"{user.name} cerró sesión")
+                # Auto clock-out worker on logout
                 if user.role == UserRole.WORKER:
-                    show_clock_screen(user)
-                else:
-                    show_login()
+                    session = get_session()
+                    try:
+                        active = session.query(ClockRecord).filter_by(
+                            user_id=user.id, clock_out=None
+                        ).first()
+                        if active:
+                            active.clock_out = datetime.now()
+                            session.commit()
+                    finally:
+                        session.close()
+                show_login()
 
             show_confirm_dialog(
                 page,
