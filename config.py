@@ -45,6 +45,10 @@ LOW_STOCK_THRESHOLD = 2
 # https://ocr.space/ocrapi/freekey
 OCR_SPACE_API_KEY = "K84112862188957"
 
+# ── Loyalty / Recompensas (Cafetería) ──
+# Compras necesarias para desbloquear una recompensa
+LOYALTY_PURCHASES_FOR_REWARD = 10
+
 # Marcas de cigarros para reportes
 DEFAULT_CIGARETTE_BRANDS = [
     "Marlboro Red", "Marlboro Gold", "Marlboro Menthol",

@@ -343,3 +343,51 @@ class ScheduleNotification(Base):
     created_at = Column(DateTime, default=datetime.now)
 
     user = relationship("User")
+
+
+# ---------- Loyalty (Cafetería) ----------
+
+class LoyaltyCustomer(Base):
+    """Cliente fidelizado de la cafetería."""
+    __tablename__ = "loyalty_customers"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(150), nullable=False)
+    email = Column(String(254), unique=True, nullable=False, index=True)
+    total_purchases = Column(Integer, default=0, nullable=False)
+    purchases_since_last_reward = Column(Integer, default=0, nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    purchases = relationship("LoyaltyCafeteriaPurchase", back_populates="customer",
+                             cascade="all, delete-orphan")
+    rewards = relationship("LoyaltyRewardRedemption", back_populates="customer",
+                           cascade="all, delete-orphan")
+
+
+class LoyaltyCafeteriaPurchase(Base):
+    """Compra de cafetería vinculada a cliente fidelizado."""
+    __tablename__ = "loyalty_cafeteria_purchases"
+
+    id = Column(Integer, primary_key=True)
+    customer_id = Column(Integer, ForeignKey("loyalty_customers.id"), nullable=False, index=True)
+    amount = Column(Float, nullable=False, default=0.0)
+    notes = Column(String(300), nullable=True)
+    purchased_at = Column(DateTime, default=datetime.now, index=True)
+
+    customer = relationship("LoyaltyCustomer", back_populates="purchases")
+
+
+class LoyaltyRewardRedemption(Base):
+    """Canje de recompensa de un cliente."""
+    __tablename__ = "loyalty_reward_redemptions"
+
+    id = Column(Integer, primary_key=True)
+    customer_id = Column(Integer, ForeignKey("loyalty_customers.id"), nullable=False, index=True)
+    reward_type = Column(String(100), nullable=False)
+    redeemed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    redeemed_at = Column(DateTime, default=datetime.now)
+    notes = Column(String(300), nullable=True)
+
+    customer = relationship("LoyaltyCustomer", back_populates="rewards")
+    redeemed_by = relationship("User")

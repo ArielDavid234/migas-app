@@ -36,6 +36,8 @@ def _migrate():
         ("products", "status",          "VARCHAR(20) NOT NULL DEFAULT 'active'"),
         ("products", "approved_by_id",  "INTEGER"),
         ("products", "approved_at",     "DATETIME"),
+        # Loyalty tables columns (tables created by create_all, extra columns guarded here)
+        ("loyalty_customers", "purchases_since_last_reward", "INTEGER NOT NULL DEFAULT 0"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:
