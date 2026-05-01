@@ -1,7 +1,7 @@
 import flet as ft
 from datetime import date, datetime
 from database.db import get_session
-from database.models import Sale, ShiftType, LoyaltyCustomer, LoyaltyCafeteriaPurchase, LoyaltyRewardRedemption
+from database.models import Sale, ShiftType, LoyaltyCustomer, LoyaltyCafeteriaPurchase, LoyaltyRewardRedemption, Product
 from sqlalchemy import func
 from components.calendar_picker import calendar_picker
 from components.sale_form import sale_form_dialog
@@ -247,6 +247,58 @@ def cafeteria_view(page: ft.Page, user):
         )
         page.show_dialog(dlg)
 
+    def _show_low_stock_alert(low_items: list):
+        rows = [
+            ft.DataRow(cells=[
+                ft.DataCell(ft.Text(item["name"], size=SMALL_SIZE, color=TEXT_PRIMARY)),
+                ft.DataCell(ft.Text(str(item["stock"]), size=SMALL_SIZE,
+                                    color=ERROR, weight=ft.FontWeight.W_600)),
+                ft.DataCell(ft.Text(str(item["min"]), size=SMALL_SIZE, color=TEXT_SECONDARY)),
+            ])
+            for item in low_items
+        ]
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ERROR, size=24),
+                ft.Text("Stock Bajo en Inventario", size=SUBTITLE_SIZE,
+                        weight=ft.FontWeight.BOLD, color=ERROR),
+            ], spacing=8),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        f"Hay {len(low_items)} producto(s) con stock igual o por debajo del mínimo:",
+                        size=SMALL_SIZE, color=TEXT_SECONDARY,
+                    ),
+                    ft.Divider(height=1),
+                    ft.DataTable(
+                        columns=[
+                            ft.DataColumn(ft.Text("Producto", size=SMALL_SIZE, weight=ft.FontWeight.W_600)),
+                            ft.DataColumn(ft.Text("Stock actual", size=SMALL_SIZE, weight=ft.FontWeight.W_600), numeric=True),
+                            ft.DataColumn(ft.Text("Mínimo", size=SMALL_SIZE, weight=ft.FontWeight.W_600), numeric=True),
+                        ],
+                        rows=rows,
+                        border=ft.border.all(1, DIVIDER_COLOR),
+                        border_radius=8,
+                        heading_row_color=ft.Colors.with_opacity(0.05, ERROR),
+                        data_row_min_height=36,
+                        column_spacing=16,
+                    ),
+                ], spacing=10, tight=True, scroll=ft.ScrollMode.AUTO),
+                width=r_dialog_width(page),
+                height=min(60 + len(low_items) * 40, 320),
+            ),
+            actions=[
+                ft.ElevatedButton(
+                    content=ft.Text("Entendido", color="white"), bgcolor=PRIMARY,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)),
+                    on_click=lambda e: page.pop_dialog(),
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.show_dialog(dlg)
+
     def _open_register_purchase_dialog(cdata: dict):
         ph = is_phone(page)
         w = r_dialog_width(page) - 48 if not ph else None
@@ -299,6 +351,20 @@ def cafeteria_view(page: ft.Page, user):
                 show_toast(page,
                            f"🎉 {cdata['name']} ha completado {LOYALTY_PURCHASES_FOR_REWARD} compras — ¡Recompensa desbloqueada!",
                            is_success=True)
+                # Check low-stock items and notify
+                sess2 = get_session()
+                try:
+                    low = (
+                        sess2.query(Product)
+                        .filter(Product.stock <= Product.min_stock, Product.stock >= 0)
+                        .order_by(Product.stock.asc())
+                        .all()
+                    )
+                    low_items = [{"name": p.name, "stock": p.stock, "min": p.min_stock} for p in low]
+                finally:
+                    sess2.close()
+                if low_items:
+                    _show_low_stock_alert(low_items)
             else:
                 show_toast(page, f"Compra registrada para {cdata['name']}", is_success=True)
             _loyalty_refresh()
