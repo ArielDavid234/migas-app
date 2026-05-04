@@ -644,7 +644,7 @@ def reportes_view(page: ft.Page, user):
         _btn_download("Día Completo", None, "#C62828"),
         _btn_download("Mañana", ShiftType.MORNING, "#2E7D32"),
         _btn_download("Noche", ShiftType.NIGHT, "#C62828"),
-    ], spacing=8, wrap=True)
+    ], spacing=8, wrap=True, run_spacing=8)
 
     filters_row = ft.Row([
         shift_buttons,
