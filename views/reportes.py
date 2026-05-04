@@ -632,19 +632,20 @@ def reportes_view(page: ft.Page, user):
     )
 
     mobile = is_mobile(page)
+    scan_btn = ft.ElevatedButton(
+        content=ft.Row([ft.Icon(ft.Icons.DOCUMENT_SCANNER, size=16, color="white"),
+                        ft.Text("Escanear Reporte", size=SMALL_SIZE, color="white")], spacing=4, tight=True),
+        bgcolor="#6A1B9A", on_click=lambda e: page.run_task(_open_scan_dialog),
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6),
+                             padding=ft.padding.symmetric(horizontal=12, vertical=8)),
+    )
     action_buttons = ft.Row([
         new_report_btn,
-        ft.ElevatedButton(
-            content=ft.Row([ft.Icon(ft.Icons.DOCUMENT_SCANNER, size=16, color="white"),
-                            ft.Text("Escanear Reporte", size=SMALL_SIZE, color="white")], spacing=4),
-            bgcolor="#6A1B9A", on_click=lambda e: page.run_task(_open_scan_dialog),
-            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6),
-                                 padding=ft.padding.symmetric(horizontal=12, vertical=8)),
-        ),
+        scan_btn,
         _btn_download("Día Completo", None, "#C62828"),
         _btn_download("Mañana", ShiftType.MORNING, "#2E7D32"),
         _btn_download("Noche", ShiftType.NIGHT, "#C62828"),
-    ], spacing=8, wrap=True, run_spacing=8)
+    ], spacing=8, wrap=True, run_spacing=8, tight=True)
 
     filters_row = ft.Row([
         shift_buttons,
