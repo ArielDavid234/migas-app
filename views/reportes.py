@@ -301,7 +301,8 @@ def reportes_view(page: ft.Page, user):
 
     _scan_picker = ft.FilePicker()
 
-    def _on_scan_result(e):
+    async def _on_scan_result(e):
+        import asyncio
         if not e.files:
             return
         file = e.files[0]
@@ -328,7 +329,8 @@ def reportes_view(page: ft.Page, user):
 
         try:
             from utils.ocr_scan import parse_department_report_image
-            data = parse_department_report_image(filepath)
+            # Run blocking OCR in a thread so the event loop isn't frozen
+            data = await asyncio.to_thread(parse_department_report_image, filepath)
         except RuntimeError as exc:
             _show_ocr_error(str(exc))
             return
