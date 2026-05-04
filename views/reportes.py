@@ -609,7 +609,7 @@ def reportes_view(page: ft.Page, user):
         content=ft.Row([
             ft.Icon(ft.Icons.NOTE_ADD, size=18, color="white"),
             ft.Text("Nuevo Reporte", color="white", size=BODY_SIZE, weight=ft.FontWeight.W_500),
-        ], spacing=6),
+        ], spacing=6, tight=True),
         bgcolor=SUCCESS,
         style=ft.ButtonStyle(
             shape=ft.RoundedRectangleBorder(radius=8),
