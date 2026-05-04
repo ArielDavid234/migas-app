@@ -301,7 +301,7 @@ def reportes_view(page: ft.Page, user):
 
     _scan_picker = ft.FilePicker()
 
-    async def _on_scan_result(e):
+    async def _process_scan_result(e):
         import asyncio
         if not e.files:
             return
@@ -329,7 +329,6 @@ def reportes_view(page: ft.Page, user):
 
         try:
             from utils.ocr_scan import parse_department_report_image
-            # Run blocking OCR in a thread so the event loop isn't frozen
             data = await asyncio.to_thread(parse_department_report_image, filepath)
         except RuntimeError as exc:
             _show_ocr_error(str(exc))
@@ -345,6 +344,13 @@ def reportes_view(page: ft.Page, user):
                 except Exception:
                     pass
         _open_scan_preview(data)
+
+    def _on_scan_result(e):
+        print(f"[SCAN] on_result fired. files={e.files}")
+        if e.files:
+            f = e.files[0]
+            print(f"[SCAN] file name={f.name!r} path={f.path!r} bytes_len={len(f.bytes) if f.bytes else 0}")
+        page.run_task(_process_scan_result, e)
 
     _scan_picker.on_result = _on_scan_result
     page.services.append(_scan_picker)
