@@ -660,13 +660,9 @@ def reportes_view(page: ft.Page, user):
     ], spacing=12, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
     main_col = ft.Column([
-        ft.Row([
-            ft.Column([
-                ft.Text("Reportes del Día", size=r_font_title(page), weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
-                ft.Text("Reportes de turnos con cigarros, lotería, cheques y propinas", size=BODY_SIZE, color=TEXT_SECONDARY),
-            ], spacing=4, expand=True),
-            action_buttons,
-        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        ft.Text("Reportes del Día", size=r_font_title(page), weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
+        ft.Text("Reportes de turnos con cigarros, lotería, cheques y propinas", size=BODY_SIZE, color=TEXT_SECONDARY),
+        action_buttons,
         ft.Container(height=4),
         filters_row,
         ft.Container(height=8),
