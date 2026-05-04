@@ -177,3 +177,118 @@ def parse_report_image(image_path: str) -> dict:
         session.close()
     rows, parse_errors = _parse_lines(lines, prod_by_name)
     return {"rows": rows, "parse_errors": parse_errors, "raw_text": raw_text}
+
+
+# ── Department Report Parser ──────────────────────────────────
+
+def _parse_decimal(s: str) -> float:
+    """Handle decimal values with period or comma as decimal separator."""
+    s = s.strip()
+    comma_count = s.count(',')
+    dot_count = s.count('.')
+    try:
+        if comma_count == 1 and dot_count == 0:
+            # European decimal: "114,08" → 114.08
+            return float(s.replace(',', '.'))
+        elif dot_count == 1 and comma_count == 0:
+            return float(s)
+        elif comma_count == 1 and dot_count == 1:
+            if s.index(',') < s.index('.'):
+                # "1,234.56" → thousands separator
+                return float(s.replace(',', ''))
+            else:
+                # "1.234,56" → European thousands + decimal
+                return float(s.replace('.', '').replace(',', '.'))
+        else:
+            return float(s.replace(',', ''))
+    except (ValueError, IndexError):
+        return 0.0
+
+
+def _parse_dept_report_lines(lines: list) -> tuple:
+    """
+    Parse DEPARTMENT REPORT format (2 lines per department):
+      Line 1: DEPT#  DESCRIPTION  ITEMS  [%OF]
+      Line 2: GROSS  REFUNDS  DISCOUNTS  NET_SALES
+    Returns (rows, parse_errors).
+    """
+    rows = []
+    parse_errors = []
+
+    in_report = False
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        if re.search(r'DEPARTMENT\s*REPORT', line, re.IGNORECASE):
+            in_report = True
+            i += 1
+            continue
+
+        if not in_report:
+            i += 1
+            continue
+
+        # Skip empty lines and column-header lines
+        if not line:
+            i += 1
+            continue
+        if re.search(r'DEPT\s*#|DESCRIPTION|GROSS\s+REFUNDS|NET\s+SALES', line, re.IGNORECASE):
+            i += 1
+            continue
+
+        # Stop at footer totals
+        if re.match(r'^(NEG\s+DEPTS?|OTHER\s+DEPTS?|TOTAL|LOYALTY|STATION\s+TOTAL)', line, re.IGNORECASE):
+            break
+
+        # Match dept info line: starts with dept# (1–4 digits), then name, then items (integer)
+        m = re.match(
+            r'^(\d{1,4})\s+([A-Z][A-Z0-9 &\-\.\/]*?)\s+(\d+)\b',
+            line, re.IGNORECASE
+        )
+        if m:
+            dept_num = m.group(1)
+            description = m.group(2).strip()
+            try:
+                items = int(m.group(3))
+            except ValueError:
+                items = 0
+
+            # Find next non-empty line for the money values
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+
+            if j < len(lines):
+                money_parts = re.findall(r'\d+[.,]\d+', lines[j].strip())
+                if len(money_parts) >= 4:
+                    rows.append({
+                        "dept_num": dept_num,
+                        "description": description,
+                        "items": items,
+                        "sales_gross": _parse_decimal(money_parts[0]),
+                        "refunds": _parse_decimal(money_parts[1]),
+                        "discounts": _parse_decimal(money_parts[2]),
+                        "net_sales": _parse_decimal(money_parts[3]),
+                    })
+                    i = j + 1
+                    continue
+                else:
+                    parse_errors.append(
+                        f"Dept {dept_num} ({description}): no se encontró la línea de valores"
+                    )
+        i += 1
+
+    return rows, parse_errors
+
+
+def parse_department_report_image(image_path: str) -> dict:
+    """
+    OCR una imagen de DEPARTMENT REPORT y extrae las filas de ventas por departamento.
+    Devuelve: {"rows": [...], "parse_errors": [...], "raw_text": str}
+    Lanza RuntimeError si no hay OCR disponible.
+    """
+    raw_text = _ocr_text(image_path)
+    lines = raw_text.splitlines()
+    rows, parse_errors = _parse_dept_report_lines(lines)
+    return {"rows": rows, "parse_errors": parse_errors, "raw_text": raw_text}

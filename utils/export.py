@@ -1039,3 +1039,43 @@ def apply_scan_report(rows: list, applied_by_id) -> dict:
     finally:
         session.close()
     return {"applied": applied, "skipped": skipped}
+
+
+def apply_department_scan_report(rows: list, report_date, user_id) -> dict:
+    """
+    Save confirmed department-sale rows (from DEPARTMENT REPORT OCR scan) to the DB.
+    Creates a DepartmentSaleReport header + one DepartmentSaleRow per item.
+    Returns {saved: int, report_id: int}.
+    """
+    from database.models import DepartmentSaleReport, DepartmentSaleRow
+    from datetime import date as _date
+
+    session = get_session()
+    try:
+        report = DepartmentSaleReport(
+            user_id=user_id,
+            report_date=report_date if report_date else _date.today(),
+        )
+        session.add(report)
+        session.flush()  # get report.id before adding rows
+
+        for r in rows:
+            try:
+                items_val = int(r.get("items") or 0)
+            except (ValueError, TypeError):
+                items_val = 0
+            session.add(DepartmentSaleRow(
+                dept_report_id=report.id,
+                dept_num=str(r.get("dept_num", "") or ""),
+                description=str(r.get("description", "") or ""),
+                items=items_val,
+                sales_gross=float(r.get("sales_gross") or 0.0),
+                refunds=float(r.get("refunds") or 0.0),
+                discounts=float(r.get("discounts") or 0.0),
+                net_sales=float(r.get("net_sales") or 0.0),
+            ))
+
+        session.commit()
+        return {"saved": len(rows), "report_id": report.id}
+    finally:
+        session.close()

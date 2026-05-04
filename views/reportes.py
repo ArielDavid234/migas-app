@@ -7,7 +7,7 @@ from components.calendar_picker import calendar_picker
 from components.report_form import report_form_dialog
 from components.confirm_dialog import confirm_delete_dialog
 from utils.responsive import is_mobile, responsive_layout, r_padding, r_font_title, r_calendar_width, scrollable_row
-from utils.export import export_report_excel_bytes, apply_scan_report
+from utils.export import export_report_excel_bytes, apply_department_scan_report
 from utils.toast import show_toast
 from utils.audit import log_action
 from assets.styles import (
@@ -327,8 +327,8 @@ def reportes_view(page: ft.Page, user):
         show_toast(page, "Procesando imagen con OCR…")
 
         try:
-            from utils.ocr_scan import parse_report_image
-            data = parse_report_image(filepath)
+            from utils.ocr_scan import parse_department_report_image
+            data = parse_department_report_image(filepath)
         except RuntimeError as exc:
             _show_ocr_error(str(exc))
             return
@@ -387,170 +387,228 @@ def reportes_view(page: ft.Page, user):
         page.show_dialog(dlg)
 
     def _open_scan_preview(data: dict):
+        from datetime import date as _date
         rows = data["rows"]
         parse_errors = data.get("parse_errors", [])
         raw_text = data.get("raw_text", "")
 
-        preview_controls = []
+        # ── Build editable row controls ──────────────────────────
+        # Each item holds ft.TextField refs for every editable column
+        class _RowCtrl:
+            def __init__(self, r):
+                self.dept_num = r.get("dept_num", "")
+                self.desc = ft.TextField(
+                    value=r.get("description", ""),
+                    dense=True, text_size=SMALL_SIZE, expand=True,
+                    border_color=DIVIDER_COLOR,
+                    focused_border_color=PRIMARY,
+                    content_padding=ft.padding.symmetric(horizontal=6, vertical=4),
+                )
+                self.items = ft.TextField(
+                    value=str(r.get("items", 0)),
+                    dense=True, text_size=SMALL_SIZE, width=60, text_align=ft.TextAlign.RIGHT,
+                    border_color=DIVIDER_COLOR, focused_border_color=PRIMARY,
+                    content_padding=ft.padding.symmetric(horizontal=6, vertical=4),
+                    keyboard_type=ft.KeyboardType.NUMBER,
+                )
+                self.gross = ft.TextField(
+                    value=f"{float(r.get('sales_gross') or 0):.2f}",
+                    dense=True, text_size=SMALL_SIZE, width=80, text_align=ft.TextAlign.RIGHT,
+                    border_color=DIVIDER_COLOR, focused_border_color=PRIMARY,
+                    content_padding=ft.padding.symmetric(horizontal=6, vertical=4),
+                    keyboard_type=ft.KeyboardType.NUMBER,
+                )
+                self.refunds = ft.TextField(
+                    value=f"{float(r.get('refunds') or 0):.2f}",
+                    dense=True, text_size=SMALL_SIZE, width=80, text_align=ft.TextAlign.RIGHT,
+                    border_color=DIVIDER_COLOR, focused_border_color=PRIMARY,
+                    content_padding=ft.padding.symmetric(horizontal=6, vertical=4),
+                    keyboard_type=ft.KeyboardType.NUMBER,
+                )
+                self.discounts = ft.TextField(
+                    value=f"{float(r.get('discounts') or 0):.2f}",
+                    dense=True, text_size=SMALL_SIZE, width=80, text_align=ft.TextAlign.RIGHT,
+                    border_color=DIVIDER_COLOR, focused_border_color=PRIMARY,
+                    content_padding=ft.padding.symmetric(horizontal=6, vertical=4),
+                    keyboard_type=ft.KeyboardType.NUMBER,
+                )
+                self.net = ft.TextField(
+                    value=f"{float(r.get('net_sales') or 0):.2f}",
+                    dense=True, text_size=SMALL_SIZE, width=80, text_align=ft.TextAlign.RIGHT,
+                    border_color=DIVIDER_COLOR, focused_border_color=PRIMARY,
+                    content_padding=ft.padding.symmetric(horizontal=6, vertical=4),
+                    keyboard_type=ft.KeyboardType.NUMBER,
+                )
 
-        if raw_text.strip():
-            preview_controls.append(
+            def to_dict(self):
+                def _f(v):
+                    try:
+                        return float(str(v).replace(",", ".") or 0)
+                    except ValueError:
+                        return 0.0
+                def _i(v):
+                    try:
+                        return int(str(v) or 0)
+                    except ValueError:
+                        return 0
+                return {
+                    "dept_num": self.dept_num,
+                    "description": self.desc.value or "",
+                    "items": _i(self.items.value),
+                    "sales_gross": _f(self.gross.value),
+                    "refunds": _f(self.refunds.value),
+                    "discounts": _f(self.discounts.value),
+                    "net_sales": _f(self.net.value),
+                }
+
+        row_ctrls = [_RowCtrl(r) for r in rows]
+
+        # ── Column header ────────────────────────────────────────
+        def _hdr(label, w=None, align=ft.TextAlign.LEFT):
+            return ft.Container(
+                content=ft.Text(label, size=SMALL_SIZE, weight=ft.FontWeight.BOLD,
+                                color=TEXT_SECONDARY, text_align=align),
+                width=w,
+                padding=ft.padding.symmetric(horizontal=4, vertical=2),
+            )
+
+        header_row = ft.Container(
+            content=ft.Row([
                 ft.Container(
-                    content=ft.Column([
-                        ft.Text("Texto extraído por OCR:", size=SMALL_SIZE,
-                                weight=ft.FontWeight.W_500, color=TEXT_SECONDARY),
+                    content=ft.Text("#", size=SMALL_SIZE, weight=ft.FontWeight.BOLD,
+                                    color=TEXT_SECONDARY),
+                    width=36, padding=ft.padding.symmetric(horizontal=4, vertical=2),
+                ),
+                ft.Container(
+                    content=ft.Text("Nombre / Departamento", size=SMALL_SIZE,
+                                    weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY),
+                    expand=True, padding=ft.padding.symmetric(horizontal=4, vertical=2),
+                ),
+                _hdr("Items", w=60, align=ft.TextAlign.RIGHT),
+                _hdr("Bruto", w=80, align=ft.TextAlign.RIGHT),
+                _hdr("Devoluc.", w=80, align=ft.TextAlign.RIGHT),
+                _hdr("Descuento", w=80, align=ft.TextAlign.RIGHT),
+                _hdr("Neto", w=80, align=ft.TextAlign.RIGHT),
+            ], spacing=4),
+            bgcolor=ft.Colors.with_opacity(0.06, PRIMARY),
+            border_radius=ft.BorderRadius(6, 6, 0, 0),
+            padding=ft.padding.symmetric(horizontal=4, vertical=4),
+        )
+
+        def _build_data_rows():
+            result = []
+            for ctrl in row_ctrls:
+                result.append(
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Container(
+                                content=ft.Text(ctrl.dept_num, size=SMALL_SIZE,
+                                                color=TEXT_SECONDARY),
+                                width=36, padding=ft.padding.symmetric(horizontal=4),
+                            ),
+                            ctrl.desc,
+                            ctrl.items,
+                            ctrl.gross,
+                            ctrl.refunds,
+                            ctrl.discounts,
+                            ctrl.net,
+                        ], spacing=4),
+                        padding=ft.padding.symmetric(vertical=3, horizontal=4),
+                        border=ft.border.only(bottom=ft.BorderSide(1, DIVIDER_COLOR)),
+                    )
+                )
+            return result
+
+        # ── Errors / raw text (collapsed by default) ─────────────
+        extra_controls = []
+        if parse_errors:
+            for err in parse_errors:
+                extra_controls.append(
+                    ft.Row([ft.Icon(ft.Icons.WARNING, color=ACCENT, size=14),
+                            ft.Text(err, size=SMALL_SIZE, color=ACCENT)], spacing=6)
+                )
+        if raw_text.strip():
+            extra_controls.append(
+                ft.ExpansionTile(
+                    title=ft.Text("Ver texto OCR extraído", size=SMALL_SIZE, color=TEXT_SECONDARY),
+                    controls=[
                         ft.Container(
                             content=ft.Text(
-                                raw_text[:800] + ("…" if len(raw_text) > 800 else ""),
+                                raw_text[:1200] + ("…" if len(raw_text) > 1200 else ""),
                                 size=SMALL_SIZE, color=TEXT_SECONDARY, selectable=True,
                             ),
                             bgcolor=ft.Colors.with_opacity(0.04, PRIMARY),
-                            border_radius=6,
-                            padding=8,
-                        ),
-                    ], spacing=4),
-                    padding=ft.padding.only(bottom=4),
+                            border_radius=6, padding=8,
+                        )
+                    ],
                 )
             )
-            preview_controls.append(ft.Divider(height=1, color=DIVIDER_COLOR))
 
-        if parse_errors:
-            for err in parse_errors:
-                preview_controls.append(
-                    ft.Container(
-                        content=ft.Row([
-                            ft.Icon(ft.Icons.WARNING, color=ACCENT, size=14),
-                            ft.Text(err, size=SMALL_SIZE, color=ACCENT),
-                        ], spacing=6),
-                        padding=ft.padding.symmetric(vertical=2),
-                    )
-                )
-            preview_controls.append(ft.Divider(height=1, color=DIVIDER_COLOR))
-
-        if not rows:
-            preview_controls.append(
-                ft.Text(
-                    "No se pudieron extraer productos del reporte.\n"
-                    "Asegúrate de que la foto sea nítida y tenga formato: nombre — cantidad.",
-                    size=BODY_SIZE, color=TEXT_SECONDARY, italic=True,
-                )
-            )
-        else:
-            preview_controls.append(
-                ft.Container(
-                    content=ft.Row([
-                        ft.Text("Producto (OCR → Inventario)", size=SMALL_SIZE,
-                                weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY, expand=3),
-                        ft.Text("Quitar", size=SMALL_SIZE, weight=ft.FontWeight.BOLD,
-                                color=TEXT_SECONDARY, expand=1, text_align=ft.TextAlign.CENTER),
-                        ft.Text("Actual", size=SMALL_SIZE, weight=ft.FontWeight.BOLD,
-                                color=TEXT_SECONDARY, expand=1, text_align=ft.TextAlign.CENTER),
-                        ft.Text("Quedaría", size=SMALL_SIZE, weight=ft.FontWeight.BOLD,
-                                color=TEXT_SECONDARY, expand=1, text_align=ft.TextAlign.CENTER),
-                    ]),
-                    padding=ft.padding.symmetric(horizontal=4, vertical=4),
-                    bgcolor=ft.Colors.with_opacity(0.05, PRIMARY),
-                    border_radius=6,
-                )
-            )
-            for r in rows:
-                has_err = bool(r.get("error"))
-                row_bg = ft.Colors.with_opacity(0.06, ERROR) if has_err else "transparent"
-                remaining_color = (
-                    ERROR if (r["remaining"] is not None and r["remaining"] < 0)
-                    else SUCCESS if not has_err else TEXT_SECONDARY
-                )
-                ocr_name = r.get("ocr_name", r["name"])
-                name_display = r["name"]
-                subtitle = (
-                    ft.Text(f"OCR leyó: \"{ocr_name}\"", size=SMALL_SIZE, color=ACCENT, italic=True)
-                    if ocr_name.lower() != r["name"].lower() else ft.Container(height=0)
-                )
-                error_line = (
-                    ft.Text(r["error"], size=SMALL_SIZE, color=ERROR, italic=True)
-                    if has_err else ft.Container(height=0)
-                )
-                preview_controls.append(
-                    ft.Container(
-                        content=ft.Row([
-                            ft.Column([
-                                ft.Text(name_display, size=BODY_SIZE,
-                                        color=TEXT_PRIMARY if not has_err else ERROR),
-                                subtitle,
-                                error_line,
-                            ], spacing=1, expand=3),
-                            ft.Text(str(r["qty_remove"]), size=BODY_SIZE, color=TEXT_PRIMARY,
-                                    expand=1, text_align=ft.TextAlign.CENTER,
-                                    weight=ft.FontWeight.W_600),
-                            ft.Text(
-                                str(r["current_stock"]) if r["current_stock"] is not None else "—",
-                                size=BODY_SIZE, color=TEXT_SECONDARY, expand=1,
-                                text_align=ft.TextAlign.CENTER,
-                            ),
-                            ft.Text(
-                                str(r["remaining"]) if r["remaining"] is not None else "—",
-                                size=BODY_SIZE, color=remaining_color, expand=1,
-                                text_align=ft.TextAlign.CENTER, weight=ft.FontWeight.W_600,
-                            ),
-                        ]),
-                        padding=ft.padding.symmetric(horizontal=4, vertical=6),
-                        bgcolor=row_bg,
-                        border_radius=6,
-                    )
-                )
-
-        valid_rows = [r for r in rows if not r.get("error")]
-        has_valid = len(valid_rows) > 0
-        error_count = len([r for r in rows if r.get("error")])
-
-        summary_text = ft.Text(
-            f"{len(valid_rows)} producto(s) se descontarán del inventario." +
-            (f"  {error_count} fila(s) con errores serán ignoradas." if error_count else ""),
-            size=SMALL_SIZE, color=TEXT_SECONDARY, italic=True,
-        )
+        has_rows = len(row_ctrls) > 0
 
         def _confirm(e):
+            confirmed = [rc.to_dict() for rc in row_ctrls]
             page.pop_dialog()
-            result = apply_scan_report(valid_rows, user.id if hasattr(user, "id") else None)
+            result = apply_department_scan_report(
+                confirmed, _date.today(),
+                user.id if hasattr(user, "id") else None,
+            )
             log_action(
                 user.id if hasattr(user, "id") else None,
-                "SCAN_REPORT", "Inventory", None,
-                f"{result['applied']} descuentos aplicados desde foto OCR",
+                "SCAN_DEPT_REPORT", "DepartmentSaleReport", result.get("report_id"),
+                f"{result['saved']} departamentos guardados desde foto OCR",
             )
-            show_toast(page, f"{result['applied']} producto(s) descontados del inventario.", is_success=True)
+            show_toast(page, f"{result['saved']} departamentos guardados correctamente.", is_success=True)
+
+        table_col = ft.Column(
+            [header_row] + _build_data_rows(),
+            spacing=0,
+            scroll=ft.ScrollMode.AUTO,
+        )
+
+        content_col = ft.Column(
+            [
+                ft.Text(
+                    "Revisa y corrige los valores antes de guardar." if has_rows
+                    else "No se detectaron departamentos. Asegurate de que la foto sea nítida y muestre el DEPARTMENT REPORT completo.",
+                    size=SMALL_SIZE, color=TEXT_SECONDARY,
+                ),
+            ] + (extra_controls if extra_controls else []) + ([
+                ft.Divider(height=1, color=DIVIDER_COLOR),
+                ft.Container(content=table_col, height=420),
+                ft.Divider(height=1, color=DIVIDER_COLOR),
+                ft.Text(
+                    f"{len(row_ctrls)} departamento(s) detectados. Podés editar cualquier valor antes de confirmar.",
+                    size=SMALL_SIZE, color=TEXT_SECONDARY, italic=True,
+                ),
+            ] if has_rows else []),
+            spacing=8, tight=True,
+        )
 
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Row([
                 ft.Icon(ft.Icons.DOCUMENT_SCANNER, color=PRIMARY_DARK, size=24),
-                ft.Text("Prevista del Reporte",
+                ft.Text("Vista Previa del Reporte",
                         size=SUBTITLE_SIZE, weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
             ], spacing=8),
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Text(
-                        "Revisa los cambios antes de aplicarlos. Los productos con error serán ignorados.",
-                        size=SMALL_SIZE, color=TEXT_SECONDARY,
-                    ),
-                    ft.Divider(height=1, color=DIVIDER_COLOR),
-                    ft.Column(preview_controls, spacing=4, scroll=ft.ScrollMode.AUTO),
-                    ft.Divider(height=1, color=DIVIDER_COLOR),
-                    summary_text,
-                ], spacing=10, tight=True),
-                width=520,
-                height=480,
-            ),
+            content=ft.Container(content=content_col, width=720, padding=0),
             actions=[
-                ft.TextButton(content=ft.Text("Cancelar"), on_click=lambda e: page.pop_dialog()),
+                ft.TextButton(
+                    content=ft.Text("Cancelar"),
+                    on_click=lambda e: page.pop_dialog(),
+                ),
                 ft.ElevatedButton(
                     content=ft.Row([
-                        ft.Icon(ft.Icons.CHECK_CIRCLE, size=16, color="white"),
-                        ft.Text("Aplicar descuentos", color="white", size=BODY_SIZE),
-                    ], spacing=6),
-                    bgcolor=PRIMARY if has_valid else TEXT_SECONDARY,
-                    disabled=not has_valid,
-                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8),
-                                         padding=ft.padding.symmetric(horizontal=16, vertical=10)),
+                        ft.Icon(ft.Icons.SAVE, size=16, color="white"),
+                        ft.Text("Guardar Reporte", color="white", size=BODY_SIZE),
+                    ], spacing=6, tight=True),
+                    bgcolor=PRIMARY if has_rows else TEXT_SECONDARY,
+                    disabled=not has_rows,
+                    style=ft.ButtonStyle(
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                        padding=ft.padding.symmetric(horizontal=16, vertical=10),
+                    ),
                     on_click=_confirm,
                 ),
             ],

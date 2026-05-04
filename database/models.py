@@ -391,3 +391,37 @@ class LoyaltyRewardRedemption(Base):
 
     customer = relationship("LoyaltyCustomer", back_populates="rewards")
     redeemed_by = relationship("User")
+
+
+# ---------- Department Sale Reports (from daily register receipt) ----------
+
+class DepartmentSaleReport(Base):
+    """Encabezado de un reporte diario de ventas por departamento (escaneado desde el reporte de la caja)."""
+    __tablename__ = "department_sale_reports"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    report_date = Column(Date, nullable=False, default=date.today, index=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    user = relationship("User")
+    rows = relationship("DepartmentSaleRow", back_populates="dept_report",
+                        cascade="all, delete-orphan", order_by="DepartmentSaleRow.dept_num")
+
+
+class DepartmentSaleRow(Base):
+    """Fila de venta de un departamento dentro de un DepartmentSaleReport."""
+    __tablename__ = "department_sale_rows"
+
+    id = Column(Integer, primary_key=True)
+    dept_report_id = Column(Integer, ForeignKey("department_sale_reports.id"),
+                            nullable=False, index=True)
+    dept_num = Column(String(10), nullable=True)
+    description = Column(String(100), nullable=False)
+    items = Column(Integer, default=0)
+    sales_gross = Column(Float, default=0.0)
+    refunds = Column(Float, default=0.0)
+    discounts = Column(Float, default=0.0)
+    net_sales = Column(Float, default=0.0)
+
+    dept_report = relationship("DepartmentSaleReport", back_populates="rows")
