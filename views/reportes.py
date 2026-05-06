@@ -302,15 +302,22 @@ def reportes_view(page: ft.Page, user):
     _scan_picker = ft.FilePicker()
 
     async def _process_scan(filepath: str, tmp_path):
-        import asyncio
+        import asyncio, traceback
+        print(f"[SCAN] _process_scan started. filepath={filepath!r}")
         try:
             show_toast(page, "Procesando imagen con OCR…")
             from utils.ocr_scan import parse_department_report_image
+            print("[SCAN] calling OCR...")
             data = await asyncio.to_thread(parse_department_report_image, filepath)
+            print(f"[SCAN] OCR done. rows={len(data.get('rows', []))} errors={data.get('parse_errors')}")
         except RuntimeError as exc:
+            print(f"[SCAN] RuntimeError: {exc}")
+            traceback.print_exc()
             _show_ocr_error(str(exc))
             return
         except Exception as exc:
+            print(f"[SCAN] Exception: {exc}")
+            traceback.print_exc()
             show_toast(page, f"Error al procesar la imagen: {exc}", is_error=True)
             return
         finally:
@@ -320,18 +327,23 @@ def reportes_view(page: ft.Page, user):
                     _os2.unlink(tmp_path)
                 except Exception:
                     pass
+        print("[SCAN] opening preview dialog...")
         _open_scan_preview(data)
 
     def _on_scan_result(e):
+        print(f"[SCAN] on_result fired. files={e.files}")
         if not e.files:
+            print("[SCAN] no files selected, returning")
             return
         file = e.files[0]
         filepath = file.path
-        print(f"[SCAN] name={file.name!r} path={filepath!r} bytes={len(file.bytes) if file.bytes else 0}")
+        bytes_len = len(file.bytes) if file.bytes else 0
+        print(f"[SCAN] name={file.name!r} path={filepath!r} bytes={bytes_len}")
 
         tmp_path = None
         if not filepath:
             if not file.bytes:
+                print("[SCAN] ERROR: no path and no bytes")
                 show_toast(page, "No se pudo leer la imagen", is_error=True)
                 return
             import tempfile, os as _os
@@ -341,10 +353,15 @@ def reportes_view(page: ft.Page, user):
                     tmp.write(file.bytes)
                     tmp_path = tmp.name
                 filepath = tmp_path
+                print(f"[SCAN] saved bytes to tmp file: {tmp_path!r}")
             except Exception as exc:
+                import traceback as _tb
+                print(f"[SCAN] ERROR saving tmp file: {exc}")
+                _tb.print_exc()
                 show_toast(page, f"Error guardando imagen: {exc}", is_error=True)
                 return
 
+        print(f"[SCAN] launching run_task with filepath={filepath!r}")
         page.run_task(_process_scan, filepath, tmp_path)
 
     _scan_picker.on_result = _on_scan_result
