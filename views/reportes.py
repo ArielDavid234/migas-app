@@ -294,16 +294,10 @@ def reportes_view(page: ft.Page, user):
     def _new_report(e):
         report_form_dialog(page, user.id, on_saved=_refresh_reports)
 
-    # ── Persistent pickers: created once per page session, never re-added ──
-    if not hasattr(page, "_dl_picker"):
-        page._dl_picker = ft.FilePicker()
-        page.overlay.append(page._dl_picker)
+    # ── Pickers registered at startup in main.py; just reference them here ──
     _dl_picker = page._dl_picker
 
     # ── Scan Report (OCR from image) ──
-    if not hasattr(page, "_scan_picker"):
-        page._scan_picker = ft.FilePicker()
-        page.overlay.append(page._scan_picker)
     _scan_picker = page._scan_picker
 
     async def _process_scan(filepath: str, tmp_path):
@@ -370,7 +364,6 @@ def reportes_view(page: ft.Page, user):
         page.run_task(_process_scan, filepath, tmp_path)
 
     _scan_picker.on_result = _on_scan_result
-    page.update()
 
     def _show_ocr_error(msg: str):
         dlg = ft.AlertDialog(

@@ -356,6 +356,15 @@ def main(page: ft.Page):
 
         _rebuild_layout_fn[0] = _build_layout
 
+        # Register persistent FilePickers in overlay once (required for Flet web mode).
+        # They live here for the whole session; reportes_view just references them.
+        if not hasattr(page, "_dl_picker"):
+            page._dl_picker = ft.FilePicker()
+            page.overlay.append(page._dl_picker)
+        if not hasattr(page, "_scan_picker"):
+            page._scan_picker = ft.FilePicker()
+            page.overlay.append(page._scan_picker)
+
         # Track last device type and window-width threshold to avoid unnecessary rebuilds
         last_device = [get_device(page)]
         _LAYOUT_THRESHOLD = 950
