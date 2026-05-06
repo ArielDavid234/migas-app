@@ -301,33 +301,10 @@ def reportes_view(page: ft.Page, user):
 
     _scan_picker = ft.FilePicker()
 
-    async def _process_scan_result(e):
+    async def _process_scan(filepath: str, tmp_path):
         import asyncio
-        if not e.files:
-            return
-        file = e.files[0]
-        filepath = file.path
-
-        tmp_path = None
-        if not filepath:
-            if not file.bytes:
-                show_toast(page, "No se pudo leer la imagen", is_error=True)
-                return
-            import tempfile
-            import os as _os
-            suffix = _os.path.splitext(file.name or "img.jpg")[1] or ".jpg"
-            try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                    tmp.write(file.bytes)
-                    tmp_path = tmp.name
-                filepath = tmp_path
-            except Exception as exc:
-                show_toast(page, f"Error guardando imagen: {exc}", is_error=True)
-                return
-
-        show_toast(page, "Procesando imagen con OCR…")
-
         try:
+            show_toast(page, "Procesando imagen con OCR…")
             from utils.ocr_scan import parse_department_report_image
             data = await asyncio.to_thread(parse_department_report_image, filepath)
         except RuntimeError as exc:
@@ -346,11 +323,29 @@ def reportes_view(page: ft.Page, user):
         _open_scan_preview(data)
 
     def _on_scan_result(e):
-        print(f"[SCAN] on_result fired. files={e.files}")
-        if e.files:
-            f = e.files[0]
-            print(f"[SCAN] file name={f.name!r} path={f.path!r} bytes_len={len(f.bytes) if f.bytes else 0}")
-        page.run_task(_process_scan_result, e)
+        if not e.files:
+            return
+        file = e.files[0]
+        filepath = file.path
+        print(f"[SCAN] name={file.name!r} path={filepath!r} bytes={len(file.bytes) if file.bytes else 0}")
+
+        tmp_path = None
+        if not filepath:
+            if not file.bytes:
+                show_toast(page, "No se pudo leer la imagen", is_error=True)
+                return
+            import tempfile, os as _os
+            suffix = _os.path.splitext(file.name or "img.jpg")[1] or ".jpg"
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(file.bytes)
+                    tmp_path = tmp.name
+                filepath = tmp_path
+            except Exception as exc:
+                show_toast(page, f"Error guardando imagen: {exc}", is_error=True)
+                return
+
+        page.run_task(_process_scan, filepath, tmp_path)
 
     _scan_picker.on_result = _on_scan_result
     page.services.append(_scan_picker)
