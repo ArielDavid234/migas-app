@@ -295,8 +295,6 @@ def reportes_view(page: ft.Page, user):
         report_form_dialog(page, user.id, on_saved=_refresh_reports)
 
     _dl_picker = ft.FilePicker()
-    page.overlay.append(_dl_picker)
-    page.update()
 
     # ── Scan Report (OCR from image) ──
 
@@ -366,7 +364,10 @@ def reportes_view(page: ft.Page, user):
         page.run_task(_process_scan, filepath, tmp_path)
 
     _scan_picker.on_result = _on_scan_result
-    page.overlay.append(_scan_picker)
+
+    # Remove old FilePickers from previous view loads, then add fresh ones
+    page.overlay[:] = [c for c in page.overlay if not isinstance(c, ft.FilePicker)]
+    page.overlay.extend([_dl_picker, _scan_picker])
     page.update()
 
     def _show_ocr_error(msg: str):
