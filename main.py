@@ -332,7 +332,7 @@ def main(page: ft.Page):
                 page.appbar = ft.AppBar(
                     leading=ft.IconButton(ft.Icons.MENU, on_click=_open_drawer, icon_color="white"),
                     title=ft.Row([
-                        ft.Image(src=APP_LOGO_ASSET, width=24, height=24, fit=ft.ImageFit.CONTAIN),
+                        ft.Image(src=APP_LOGO_ASSET, width=24, height=24, fit="contain"),
                         ft.Text(APP_NAME, color="white", size=18, weight=ft.FontWeight.BOLD),
                     ], spacing=8, tight=True),
                     bgcolor="#0D47A1",

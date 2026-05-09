@@ -176,7 +176,7 @@ def sidebar(page: ft.Page, user, on_navigate, on_logout, on_toggle_theme=None,
                 ft.Container(
                     content=ft.Column(
                         [
-                            ft.Image(src=APP_LOGO_ASSET, width=56, height=56, fit=ft.ImageFit.CONTAIN),
+                            ft.Image(src=APP_LOGO_ASSET, width=56, height=56, fit="contain"),
                             ft.Text(
                                 APP_NAME,
                                 color=SIDEBAR_TEXT,
@@ -279,7 +279,7 @@ def sidebar_drawer(page: ft.Page, user, on_navigate, on_logout, on_toggle_theme=
 
     header = ft.Container(
         content=ft.Column([
-            ft.Image(src=APP_LOGO_ASSET, width=56, height=56, fit=ft.ImageFit.CONTAIN),
+            ft.Image(src=APP_LOGO_ASSET, width=56, height=56, fit="contain"),
             ft.Text(APP_NAME, color=SIDEBAR_TEXT, size=20, weight=ft.FontWeight.BOLD),
             ft.Text(f"{user.name} ({user.role.value.capitalize()})",
                     color=ft.Colors.with_opacity(0.7, SIDEBAR_TEXT), size=SMALL_SIZE),

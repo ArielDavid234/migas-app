@@ -94,7 +94,7 @@ def login_view(page: ft.Page, on_login_success):
     login_card = ft.Container(
         content=ft.Column(
             [
-                ft.Image(src=APP_LOGO_ASSET, width=icon_sz, height=icon_sz, fit=ft.ImageFit.CONTAIN),
+                ft.Image(src=APP_LOGO_ASSET, width=icon_sz, height=icon_sz, fit="contain"),
                 ft.Text(
                     APP_NAME,
                     size=title_sz,
