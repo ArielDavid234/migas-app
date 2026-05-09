@@ -1,5 +1,6 @@
 import flet as ft
 from database.models import UserRole
+from config import APP_NAME, APP_LOGO_ASSET
 from assets.styles import (
     SIDEBAR_BG, SIDEBAR_TEXT, PRIMARY_LIGHT, PRIMARY, ACCENT,
     FONT_FAMILY, BODY_SIZE, SMALL_SIZE, ERROR,
@@ -175,9 +176,9 @@ def sidebar(page: ft.Page, user, on_navigate, on_logout, on_toggle_theme=None,
                 ft.Container(
                     content=ft.Column(
                         [
-                            ft.Icon(ft.Icons.LOCAL_GAS_STATION, color=SIDEBAR_TEXT, size=36),
+                            ft.Image(src=APP_LOGO_ASSET, width=56, height=56, fit=ft.ImageFit.CONTAIN),
                             ft.Text(
-                                "MigasApp",
+                                APP_NAME,
                                 color=SIDEBAR_TEXT,
                                 size=20,
                                 weight=ft.FontWeight.BOLD,
@@ -278,8 +279,8 @@ def sidebar_drawer(page: ft.Page, user, on_navigate, on_logout, on_toggle_theme=
 
     header = ft.Container(
         content=ft.Column([
-            ft.Icon(ft.Icons.LOCAL_GAS_STATION, color=SIDEBAR_TEXT, size=36),
-            ft.Text("MigasApp", color=SIDEBAR_TEXT, size=20, weight=ft.FontWeight.BOLD),
+            ft.Image(src=APP_LOGO_ASSET, width=56, height=56, fit=ft.ImageFit.CONTAIN),
+            ft.Text(APP_NAME, color=SIDEBAR_TEXT, size=20, weight=ft.FontWeight.BOLD),
             ft.Text(f"{user.name} ({user.role.value.capitalize()})",
                     color=ft.Colors.with_opacity(0.7, SIDEBAR_TEXT), size=SMALL_SIZE),
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4),

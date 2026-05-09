@@ -27,10 +27,11 @@ from utils.alerts import get_inventory_alert_count, get_pending_orders_count, ge
 from utils.backup import create_backup
 from components.dialog_helper import show_confirm_dialog
 from utils.audit import log_action
+from config import APP_NAME, APP_LOGO_ASSET
 
 
 def main(page: ft.Page):
-    page.title = "MigasApp — Gestión de Gasolinera"
+    page.title = APP_NAME
     page.theme_mode = ft.ThemeMode.LIGHT
 
     # Light theme — colores primarios del app
@@ -330,7 +331,10 @@ def main(page: ft.Page):
 
                 page.appbar = ft.AppBar(
                     leading=ft.IconButton(ft.Icons.MENU, on_click=_open_drawer, icon_color="white"),
-                    title=ft.Text("MigasApp", color="white", size=18, weight=ft.FontWeight.BOLD),
+                    title=ft.Row([
+                        ft.Image(src=APP_LOGO_ASSET, width=24, height=24, fit=ft.ImageFit.CONTAIN),
+                        ft.Text(APP_NAME, color="white", size=18, weight=ft.FontWeight.BOLD),
+                    ], spacing=8, tight=True),
                     bgcolor="#0D47A1",
                     center_title=True,
                 )

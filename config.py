@@ -18,7 +18,8 @@ DATA_DIR = _get_data_dir()
 DB_PATH = os.path.join(DATA_DIR, "migasapp.db")
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
-APP_NAME = "MigasApp"
+APP_NAME = "MiGas App"
+APP_LOGO_ASSET = "LOGO.jpg"
 GAS_STATION_NAME = "Gasolinera Migas"
 APP_SALT = "m1g4s_4pp_s4lt_2024"
 

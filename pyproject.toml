@@ -1,0 +1,10 @@
+[project]
+name = "migas-app"
+version = "1.0.0"
+description = "MiGas App"
+requires-python = ">=3.12"
+
+[tool.flet]
+product = "MiGas App"
+company = "Ariel David"
+bundle_id = "com.arieldavid.migasapp"

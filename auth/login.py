@@ -2,7 +2,7 @@ import flet as ft
 import hashlib
 from database.db import get_session
 from database.models import User
-from config import APP_SALT
+from config import APP_NAME, APP_LOGO_ASSET, APP_SALT
 from assets.styles import (
     PRIMARY, PRIMARY_DARK, SURFACE, ERROR, TEXT_PRIMARY,
     TEXT_SECONDARY, FONT_FAMILY, TITLE_SIZE, BODY_SIZE,
@@ -94,9 +94,9 @@ def login_view(page: ft.Page, on_login_success):
     login_card = ft.Container(
         content=ft.Column(
             [
-                ft.Icon(ft.Icons.LOCAL_GAS_STATION, size=icon_sz, color=PRIMARY),
+                ft.Image(src=APP_LOGO_ASSET, width=icon_sz, height=icon_sz, fit=ft.ImageFit.CONTAIN),
                 ft.Text(
-                    "MigasApp",
+                    APP_NAME,
                     size=title_sz,
                     weight=ft.FontWeight.BOLD,
                     color=PRIMARY_DARK,
