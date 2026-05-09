@@ -33,6 +33,13 @@ def main(page: ft.Page):
     page.title = "MigasApp — Gestión de Gasolinera"
     page.theme_mode = ft.ThemeMode.LIGHT
 
+    # FilePickers MUST be in page.overlay before any page.update() so Flet web
+    # registers them on initial connection.  reportes_view reads page._dl_picker
+    # and page._scan_picker directly; it never touches page.overlay itself.
+    page._dl_picker = ft.FilePicker()
+    page._scan_picker = ft.FilePicker()
+    page.overlay.extend([page._dl_picker, page._scan_picker])
+
     # Light theme — colores primarios del app
     _light_scheme = ft.ColorScheme(
         primary="#1565C0",
@@ -355,15 +362,6 @@ def main(page: ft.Page):
             page.update()
 
         _rebuild_layout_fn[0] = _build_layout
-
-        # Register persistent FilePickers in overlay once (required for Flet web mode).
-        # They live here for the whole session; reportes_view just references them.
-        if not hasattr(page, "_dl_picker"):
-            page._dl_picker = ft.FilePicker()
-            page.overlay.append(page._dl_picker)
-        if not hasattr(page, "_scan_picker"):
-            page._scan_picker = ft.FilePicker()
-            page.overlay.append(page._scan_picker)
 
         # Track last device type and window-width threshold to avoid unnecessary rebuilds
         last_device = [get_device(page)]
