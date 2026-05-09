@@ -2,7 +2,7 @@ import flet as ft
 from datetime import date
 from sqlalchemy.orm import joinedload
 from database.db import get_session
-from database.models import User, Report, ShiftType, UserRole
+from database.models import User, Report, ShiftType, UserRole, DepartmentSaleReport
 from components.calendar_picker import calendar_picker
 from components.report_form import report_form_dialog
 from components.confirm_dialog import confirm_delete_dialog
@@ -63,6 +63,40 @@ def reportes_view(page: ft.Page, user):
                     "checks": r.checks,
                     "tips": r.tips,
                     "specials": r.special_items,
+                })
+            return result
+        finally:
+            session.close()
+
+    def _dept_row_sort_key(row):
+        dept_num = str(row.dept_num or "").strip()
+        if dept_num.isdigit():
+            return (0, int(dept_num), row.description or "")
+        return (1, dept_num, row.description or "")
+
+    def _load_department_reports(d: date, uid: int | None = None):
+        session = get_session()
+        try:
+            q = (
+                session.query(DepartmentSaleReport)
+                .options(
+                    joinedload(DepartmentSaleReport.user),
+                    joinedload(DepartmentSaleReport.rows),
+                )
+                .filter(DepartmentSaleReport.report_date == d)
+                .order_by(DepartmentSaleReport.created_at.desc(), DepartmentSaleReport.id.desc())
+            )
+            if uid:
+                q = q.filter(DepartmentSaleReport.user_id == uid)
+
+            reports = q.all()
+            result = []
+            for r in reports:
+                rows = sorted(list(r.rows or []), key=_dept_row_sort_key)
+                result.append({
+                    "report": r,
+                    "user_name": r.user.name if r.user else "—",
+                    "rows": rows,
                 })
             return result
         finally:
@@ -181,6 +215,98 @@ def reportes_view(page: ft.Page, user):
         confirm_delete_dialog(page, "Eliminar Reporte",
                               f"¿Eliminar el reporte de {label}? Esta acción no se puede deshacer.", _do)
 
+    def _delete_department_report(report_id: int, label: str):
+        def _do():
+            session = get_session()
+            try:
+                r = session.query(DepartmentSaleReport).get(report_id)
+                if r:
+                    session.delete(r)
+                    session.commit()
+            finally:
+                session.close()
+            _refresh_reports()
+            show_toast(page, "Reporte escaneado eliminado", is_success=True)
+
+        confirm_delete_dialog(
+            page,
+            "Eliminar Reporte Escaneado",
+            f"¿Eliminar el reporte escaneado de {label}? Esta acción no se puede deshacer.",
+            _do,
+        )
+
+    def _build_department_sales_table(rows):
+        if not rows:
+            return ft.Text("Sin filas de departamentos", size=SMALL_SIZE, color=TEXT_SECONDARY, italic=True)
+
+        table_rows = []
+        total_items = 0
+        total_gross = 0.0
+        total_refunds = 0.0
+        total_discounts = 0.0
+        total_net = 0.0
+
+        for row in rows:
+            items = int(row.items or 0)
+            gross = float(row.sales_gross or 0.0)
+            refunds = float(row.refunds or 0.0)
+            discounts = float(row.discounts or 0.0)
+            net = float(row.net_sales or 0.0)
+
+            total_items += items
+            total_gross += gross
+            total_refunds += refunds
+            total_discounts += discounts
+            total_net += net
+
+            table_rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text(str(row.dept_num or "—"), size=SMALL_SIZE)),
+                ft.DataCell(ft.Text(row.description or "—", size=SMALL_SIZE)),
+                ft.DataCell(ft.Text(str(items), size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT)),
+                ft.DataCell(ft.Text(f"${gross:,.2f}", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT)),
+                ft.DataCell(ft.Text(f"${refunds:,.2f}", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT)),
+                ft.DataCell(ft.Text(f"${discounts:,.2f}", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT)),
+                ft.DataCell(ft.Text(f"${net:,.2f}", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT, color=SUCCESS)),
+            ]))
+
+        table_rows.append(ft.DataRow(cells=[
+            ft.DataCell(ft.Text("TOTAL", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
+            ft.DataCell(ft.Text("", size=SMALL_SIZE)),
+            ft.DataCell(ft.Text(str(total_items), size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
+            ft.DataCell(ft.Text(f"${total_gross:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
+            ft.DataCell(ft.Text(f"${total_refunds:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
+            ft.DataCell(ft.Text(f"${total_discounts:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
+            ft.DataCell(ft.Text(f"${total_net:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT, color=SUCCESS)),
+        ]))
+
+        return ft.Column([
+            scrollable_row([ft.DataTable(
+                columns=[
+                    ft.DataColumn(ft.Text("Dept", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Descripción", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Items", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Bruto", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Refunds", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Descuentos", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Neto", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
+                ],
+                rows=table_rows,
+                border=ft.border.all(1, DIVIDER_COLOR), border_radius=6,
+                heading_row_color=ft.Colors.with_opacity(0.05, PRIMARY),
+                column_spacing=18,
+            )]),
+            ft.Container(
+                content=ft.Text(
+                    f"Neto total del reporte escaneado: ${total_net:,.2f}",
+                    size=BODY_SIZE,
+                    weight=ft.FontWeight.BOLD,
+                    color=PRIMARY_DARK,
+                ),
+                padding=ft.padding.symmetric(horizontal=12, vertical=8),
+                bgcolor=ft.Colors.with_opacity(0.08, PRIMARY), border_radius=6,
+            ),
+        ], spacing=8)
+
     def _build_report_view(report_data):
         rd = report_data
         shift_name = "Mañana" if rd["report"].shift == ShiftType.MORNING else "Noche"
@@ -238,9 +364,46 @@ def reportes_view(page: ft.Page, user):
             border=ft.border.all(1, DIVIDER_COLOR),
         )
 
+    def _build_department_report_view(report_data):
+        rd = report_data
+        report_obj = rd["report"]
+        created_label = report_obj.created_at.strftime("%d/%m/%Y %H:%M") if report_obj.created_at else "—"
+        is_admin = user.role == UserRole.ADMIN
+        can_delete = is_admin or report_obj.user_id == user.id
+
+        header_row = ft.Row([
+            ft.Column([
+                ft.Text("Reporte Escaneado — Departamentos", size=SUBTITLE_SIZE,
+                        weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
+                ft.Text(f"Por: {rd['user_name']} • Guardado: {created_label}", size=SMALL_SIZE, color=TEXT_SECONDARY),
+            ], spacing=2, expand=True),
+            ft.IconButton(
+                icon=ft.Icons.DELETE_OUTLINE,
+                icon_color=ERROR,
+                icon_size=20,
+                tooltip="Eliminar reporte escaneado",
+                on_click=lambda e, rid=report_obj.id, lbl=rd["user_name"]: _delete_department_report(rid, lbl),
+                visible=can_delete,
+            ),
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.START)
+
+        return ft.Container(
+            content=ft.Column([
+                header_row,
+                ft.Divider(height=1, color=DIVIDER_COLOR),
+                _section("Ventas por Departamento", ft.Icons.RECEIPT_LONG, [
+                    _build_department_sales_table(rd["rows"])
+                ]),
+            ], spacing=12),
+            padding=16, border_radius=12, bgcolor=ft.Colors.with_opacity(0.03, ACCENT),
+            border=ft.border.all(1, DIVIDER_COLOR),
+        )
+
     def _build_content(d: date, shift: ShiftType | None, uid: int | None = None):
         reports = _load_reports(d, shift, uid)
-        if not reports:
+        department_reports = _load_department_reports(d, uid) if shift is None else []
+
+        if not reports and not department_reports:
             shift_label = ""
             if shift == ShiftType.MORNING:
                 shift_label = " (Mañana)"
@@ -254,7 +417,10 @@ def reportes_view(page: ft.Page, user):
                 ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
                 alignment=ft.Alignment(0, 0), padding=40,
             )]
-        return [_build_report_view(rd) for rd in reports]
+
+        controls = [_build_report_view(rd) for rd in reports]
+        controls.extend(_build_department_report_view(rd) for rd in department_reports)
+        return controls
 
     def _get_selected_shift():
         sel = shift_selector.current.selected
@@ -374,7 +540,6 @@ def reportes_view(page: ft.Page, user):
         page.show_dialog(dlg)
 
     def _open_scan_preview(data: dict):
-        from datetime import date as _date
         rows = data["rows"]
         parse_errors = data.get("parse_errors", [])
         raw_text = data.get("raw_text", "")
@@ -536,7 +701,7 @@ def reportes_view(page: ft.Page, user):
             confirmed = [rc.to_dict() for rc in row_ctrls]
             page.pop_dialog()
             result = apply_department_scan_report(
-                confirmed, _date.today(),
+                confirmed, selected_date,
                 user.id if hasattr(user, "id") else None,
             )
             log_action(
@@ -544,6 +709,7 @@ def reportes_view(page: ft.Page, user):
                 "SCAN_DEPT_REPORT", "DepartmentSaleReport", result.get("report_id"),
                 f"{result['saved']} departamentos guardados desde foto OCR",
             )
+            _refresh_reports()
             show_toast(page, f"{result['saved']} departamentos guardados correctamente.", is_success=True)
 
         table_col = ft.Column(
