@@ -33,13 +33,6 @@ def main(page: ft.Page):
     page.title = "MigasApp — Gestión de Gasolinera"
     page.theme_mode = ft.ThemeMode.LIGHT
 
-    # FilePickers MUST be in page.overlay before any page.update() so Flet web
-    # registers them on initial connection.  reportes_view reads page._dl_picker
-    # and page._scan_picker directly; it never touches page.overlay itself.
-    page._dl_picker = ft.FilePicker()
-    page._scan_picker = ft.FilePicker()
-    page.overlay.extend([page._dl_picker, page._scan_picker])
-
     # Light theme — colores primarios del app
     _light_scheme = ft.ColorScheme(
         primary="#1565C0",

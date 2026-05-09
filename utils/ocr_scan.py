@@ -7,7 +7,7 @@ from database.db import get_session
 from database.models import Product, ProductStatus
 
 
-def _ocr_with_ocrspace(image_path: str, api_key: str) -> str:
+def _ocrspace_request(image_path: str, api_key: str, *, language: str = "spa", overlay: bool = False) -> dict:
     try:
         import requests
     except ImportError:
@@ -27,8 +27,8 @@ def _ocr_with_ocrspace(image_path: str, api_key: str) -> str:
     payload = {
         "apikey": api_key,
         "base64Image": f"data:{mime};base64,{img_b64}",
-        "language": "spa",
-        "isOverlayRequired": False,
+        "language": language,
+        "isOverlayRequired": overlay,
         "detectOrientation": True,
         "scale": True,
         "OCREngine": 2,  # Engine 2 = mejor para texto impreso
@@ -47,8 +47,37 @@ def _ocr_with_ocrspace(image_path: str, api_key: str) -> str:
         err = data.get("ErrorMessage", ["Error desconocido"])
         raise RuntimeError(f"OCR.space: {err[0] if isinstance(err, list) else err}")
 
+    return data
+
+
+def _ocr_with_ocrspace(image_path: str, api_key: str) -> str:
+    data = _ocrspace_request(image_path, api_key, language="spa", overlay=False)
+
     results = data.get("ParsedResults", [])
     return "\n".join(r.get("ParsedText", "") for r in results) if results else ""
+
+
+def _ocr_with_ocrspace_overlay(image_path: str, api_key: str) -> dict:
+    data = _ocrspace_request(image_path, api_key, language="eng", overlay=True)
+
+    results = data.get("ParsedResults", [])
+    raw_text = "\n".join(r.get("ParsedText", "") for r in results) if results else ""
+    overlay_words = []
+
+    for result in results:
+        overlay = result.get("TextOverlay") or {}
+        for line in overlay.get("Lines", []) or []:
+            for word in line.get("Words", []) or []:
+                text = str(word.get("WordText", "") or "").strip()
+                if not text:
+                    continue
+                overlay_words.append({
+                    "text": text,
+                    "left": int(word.get("Left", 0) or 0),
+                    "top": int(word.get("Top", 0) or 0),
+                })
+
+    return {"raw_text": raw_text, "overlay_words": overlay_words}
 
 
 def _ocr_with_tesseract(image_path: str) -> str:
@@ -205,6 +234,313 @@ def _parse_decimal(s: str) -> float:
         return 0.0
 
 
+def _normalize_word_text(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "").strip())
+
+
+def _normalize_field_text(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "").replace("|", " ")).strip()
+
+
+def _clean_numeric_text(text: str) -> str:
+    normalized = _normalize_field_text(text)
+    tokens = re.findall(r"\d+", normalized)
+    if tokens and not any(separator in normalized for separator in [",", ".", ":"]):
+        if len(tokens) == 2 and len(tokens[1]) <= 2:
+            return f"{tokens[0]}.{tokens[1].zfill(2)}"
+
+    cleaned = normalized.replace(" ", "")
+    cleaned = cleaned.replace(":", ".")
+    cleaned = re.sub(r"[^\d,\.\-]", "", cleaned)
+    return cleaned.strip(".,")
+
+
+def _parse_money_text(text: str):
+    cleaned = _clean_numeric_text(text)
+    if not cleaned or not re.search(r"\d", cleaned):
+        return None
+    return _parse_decimal(cleaned)
+
+
+def _parse_items_text(text: str):
+    normalized = _normalize_field_text(text)
+    matches = re.findall(r"\d+(?:[.,:]\d+)?", normalized)
+    if matches:
+        value = _parse_decimal(matches[0].replace(":", "."))
+        rounded = int(round(value))
+        return rounded if abs(value - rounded) <= 0.25 else int(value)
+
+    value = _parse_money_text(text)
+    if value is None:
+        m = re.search(r"\d+", str(text or ""))
+        return int(m.group()) if m else None
+    rounded = int(round(value))
+    return rounded if abs(value - rounded) <= 0.25 else int(value)
+
+
+def _parse_dept_text(text: str):
+    matches = re.findall(r"\d{1,4}", str(text or ""))
+    return matches[-1] if matches else ""
+
+
+def _cluster_overlay_words(words: list, y_threshold: int = 8) -> list:
+    clusters = []
+    for word in sorted(words, key=lambda item: (item["top"], item["left"])):
+        if not clusters or abs(word["top"] - clusters[-1]["top"]) > y_threshold:
+            clusters.append({"top": word["top"], "words": [word]})
+            continue
+        clusters[-1]["words"].append(word)
+        tops = [w["top"] for w in clusters[-1]["words"]]
+        clusters[-1]["top"] = int(sum(tops) / len(tops))
+
+    for cluster in clusters:
+        cluster["words"].sort(key=lambda item: item["left"])
+        cluster["text"] = " ".join(_normalize_word_text(w["text"]) for w in cluster["words"] if _normalize_word_text(w["text"]))
+    return clusters
+
+
+def _find_report_header_positions(clusters: list) -> tuple:
+    start_idx = None
+    positions = {}
+
+    for index, cluster in enumerate(clusters):
+        text_up = cluster["text"].upper()
+        if start_idx is None and "DEPARTMENT" in text_up and "REPORT" in text_up:
+            start_idx = index
+            continue
+        if start_idx is None:
+            continue
+
+        for word in cluster["words"]:
+            word_up = word["text"].upper()
+            if word_up.startswith("DEPT") and "dept" not in positions:
+                positions["dept"] = word["left"]
+            elif word_up == "DESCRIPTION" and "desc" not in positions:
+                positions["desc"] = word["left"]
+            elif word_up == "GROSS" and "desc" not in positions:
+                positions["desc"] = word["left"]
+            elif word_up == "REFUNDS" and "refunds" not in positions:
+                positions["refunds"] = word["left"]
+            elif word_up in {"ITEMS", "DISCOUNTS"} and "mid" not in positions:
+                positions["mid"] = word["left"]
+            elif word_up == "NET" and "right" not in positions:
+                positions["right"] = word["left"]
+
+        if len(positions) >= 5:
+            break
+
+    return start_idx, positions
+
+
+def _build_report_column_bounds(positions: dict) -> dict:
+    dept_x = positions.get("dept", 0)
+    desc_x = positions.get("desc", dept_x + 35)
+    refunds_x = positions.get("refunds", desc_x + 60)
+    mid_x = positions.get("mid", refunds_x + 55)
+    right_x = positions.get("right", mid_x + 50)
+
+    return {
+        "dept_desc": int((dept_x + desc_x) / 2),
+        "desc_mid": int((desc_x + mid_x) / 2),
+        "desc_refunds": int((desc_x + refunds_x) / 2),
+        "refunds_mid": int((refunds_x + mid_x) / 2),
+        "mid_right": int((mid_x + right_x) / 2),
+    }
+
+
+def _cluster_header_columns(cluster: dict, bounds: dict) -> dict:
+    columns = {"dept": [], "left": [], "mid": [], "right": []}
+    for word in cluster["words"]:
+        left = word["left"]
+        if left < bounds["dept_desc"]:
+            columns["dept"].append(word["text"])
+        elif left < bounds["desc_mid"]:
+            columns["left"].append(word["text"])
+        elif left < bounds["mid_right"]:
+            columns["mid"].append(word["text"])
+        else:
+            columns["right"].append(word["text"])
+
+    return {
+        key: _normalize_field_text(" ".join(values))
+        for key, values in columns.items()
+    }
+
+
+def _cluster_detail_columns(cluster: dict, bounds: dict) -> dict:
+    columns = {"dept": [], "left": [], "refunds": [], "mid": [], "right": []}
+    for word in cluster["words"]:
+        left = word["left"]
+        if left < bounds["dept_desc"]:
+            columns["dept"].append(word["text"])
+        elif left < bounds["desc_refunds"]:
+            columns["left"].append(word["text"])
+        elif left < bounds["refunds_mid"]:
+            columns["refunds"].append(word["text"])
+        elif left < bounds["mid_right"]:
+            columns["mid"].append(word["text"])
+        else:
+            columns["right"].append(word["text"])
+
+    return {
+        key: _normalize_field_text(" ".join(values))
+        for key, values in columns.items()
+    }
+
+
+def _is_report_header_or_footer(text: str) -> bool:
+    text_up = text.upper()
+    if not text_up:
+        return True
+    if any(token in text_up for token in ["DEPARTMENT REPORT", "DEPTS", "DESCRIPTION", "REFUNDS", "DISCOUNTS", "NET SALES", "GROSS"]):
+        return True
+    if re.search(r"^(NEG\s+DEPTS?|OTHER\s+DEPTS?|TOTAL|LOYALTY|STATION\s+TOTAL)", text_up):
+        return True
+    return False
+
+
+def _looks_like_row_header(columns: dict) -> bool:
+    left = columns["left"]
+    return bool(re.search(r"[A-Z]", left, re.IGNORECASE))
+
+
+def _parse_items_from_percent_block(text: str):
+    normalized = _normalize_field_text(text)
+    if "%" not in normalized:
+        return None
+    matches = re.findall(r"\d+(?:[.,:]\d+)?", normalized)
+    if len(matches) < 2:
+        return None
+    value = _parse_decimal(matches[0].replace(":", "."))
+    rounded = int(round(value))
+    return rounded if abs(value - rounded) <= 0.25 else int(value)
+
+
+def _looks_like_row_detail(columns: dict) -> bool:
+    gross = _parse_money_text(columns["left"])
+    if gross is None and "." in columns.get("dept", ""):
+        gross = _parse_money_text(columns["dept"])
+    return gross is not None and any(
+        _parse_money_text(columns[key]) is not None for key in ("refunds", "mid", "right")
+    )
+
+
+def _fill_missing_dept_numbers(rows: list):
+    explicit = []
+    for index, row in enumerate(rows):
+        dept = row.get("dept_num", "")
+        explicit.append((index, int(dept))) if str(dept).isdigit() else None
+
+    if not explicit:
+        return rows
+
+    first_index, first_value = explicit[0]
+    if first_index > 0:
+        start_value = max(1, first_value - first_index)
+        for idx in range(first_index):
+            rows[idx]["dept_num"] = str(start_value + idx)
+
+    for current, nxt in zip(explicit, explicit[1:]):
+        cur_index, cur_value = current
+        next_index, next_value = nxt
+        gap_rows = next_index - cur_index - 1
+        if gap_rows <= 0:
+            continue
+        for offset in range(1, gap_rows + 1):
+            candidate = cur_value + offset
+            if candidate >= next_value:
+                break
+            rows[cur_index + offset]["dept_num"] = str(candidate)
+
+    last_index, last_value = explicit[-1]
+    for idx in range(last_index + 1, len(rows)):
+        if not rows[idx].get("dept_num"):
+            rows[idx]["dept_num"] = str(last_value + (idx - last_index))
+
+    return rows
+
+
+def _parse_dept_report_overlay_words(overlay_words: list) -> tuple:
+    rows = []
+    parse_errors = []
+    clusters = _cluster_overlay_words(overlay_words)
+    start_idx, positions = _find_report_header_positions(clusters)
+
+    if start_idx is None or len(positions) < 4:
+        return rows, ["No se pudo identificar la cabecera del DEPARTMENT REPORT"]
+
+    bounds = _build_report_column_bounds(positions)
+    pending = None
+
+    for cluster in clusters[start_idx + 1:]:
+        text = _normalize_field_text(cluster["text"])
+        if not text:
+            continue
+        text_up = text.upper()
+        if re.search(r"^(NEG\s+DEPTS?|OTHER\s+DEPTS?|TOTAL|LOYALTY|STATION\s+TOTAL)", text_up):
+            break
+        if _is_report_header_or_footer(text):
+            continue
+
+        header_columns = _cluster_header_columns(cluster, bounds)
+
+        if _looks_like_row_header(header_columns):
+            if pending:
+                parse_errors.append(
+                    f"Fila incompleta para depto {pending.get('dept_num') or '?'} ({pending.get('description') or 'sin descripcion'})"
+                )
+                rows.append(pending)
+
+            pending = {
+                "dept_num": _parse_dept_text(header_columns["dept"]),
+                "description": header_columns["left"],
+                "items": (
+                    _parse_items_text(header_columns["mid"])
+                    or _parse_items_from_percent_block(header_columns["right"])
+                    or 0
+                ),
+                "sales_gross": 0.0,
+                "refunds": 0.0,
+                "discounts": 0.0,
+                "net_sales": 0.0,
+            }
+            continue
+
+        detail_columns = _cluster_detail_columns(cluster, bounds)
+        if pending and _looks_like_row_detail(detail_columns):
+            gross_value = _parse_money_text(detail_columns["left"])
+            if gross_value is None and "." in detail_columns.get("dept", ""):
+                gross_value = _parse_money_text(detail_columns["dept"])
+            pending["sales_gross"] = gross_value or 0.0
+            pending["refunds"] = _parse_money_text(detail_columns["refunds"]) or 0.0
+            pending["discounts"] = _parse_money_text(detail_columns["mid"]) or 0.0
+            pending["net_sales"] = _parse_money_text(detail_columns["right"]) or 0.0
+            rows.append(pending)
+            pending = None
+
+    if pending:
+        parse_errors.append(
+            f"Fila incompleta para depto {pending.get('dept_num') or '?'} ({pending.get('description') or 'sin descripcion'})"
+        )
+        rows.append(pending)
+
+    cleaned_rows = []
+    for row in rows:
+        if not row.get("description"):
+            continue
+        cleaned_rows.append({
+            "dept_num": str(row.get("dept_num", "") or ""),
+            "description": row.get("description", "").strip(),
+            "items": int(row.get("items") or 0),
+            "sales_gross": float(row.get("sales_gross") or 0.0),
+            "refunds": float(row.get("refunds") or 0.0),
+            "discounts": float(row.get("discounts") or 0.0),
+            "net_sales": float(row.get("net_sales") or 0.0),
+        })
+
+    return _fill_missing_dept_numbers(cleaned_rows), parse_errors
+
+
 def _parse_dept_report_lines(lines: list) -> tuple:
     """
     Parse DEPARTMENT REPORT format (2 lines per department):
@@ -288,7 +624,26 @@ def parse_department_report_image(image_path: str) -> dict:
     Devuelve: {"rows": [...], "parse_errors": [...], "raw_text": str}
     Lanza RuntimeError si no hay OCR disponible.
     """
-    raw_text = _ocr_text(image_path)
-    lines = raw_text.splitlines()
-    rows, parse_errors = _parse_dept_report_lines(lines)
+    try:
+        from config import OCR_SPACE_API_KEY
+        api_key = OCR_SPACE_API_KEY.strip()
+    except Exception:
+        api_key = ""
+
+    raw_text = ""
+    rows = []
+    parse_errors = []
+
+    if api_key:
+        overlay_data = _ocr_with_ocrspace_overlay(image_path, api_key)
+        raw_text = overlay_data["raw_text"]
+        rows, parse_errors = _parse_dept_report_overlay_words(overlay_data["overlay_words"])
+
+    if not rows:
+        raw_text = raw_text or _ocr_text(image_path)
+        text_rows, text_errors = _parse_dept_report_lines(raw_text.splitlines())
+        if text_rows:
+            rows = text_rows
+        parse_errors.extend(text_errors)
+
     return {"rows": rows, "parse_errors": parse_errors, "raw_text": raw_text}

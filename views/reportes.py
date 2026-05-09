@@ -294,28 +294,17 @@ def reportes_view(page: ft.Page, user):
     def _new_report(e):
         report_form_dialog(page, user.id, on_saved=_refresh_reports)
 
-    # ── Pickers registered at startup in main.py; just reference them here ──
-    _dl_picker = page._dl_picker
-
-    # ── Scan Report (OCR from image) ──
-    _scan_picker = page._scan_picker
-
     async def _process_scan(filepath: str, tmp_path):
         import asyncio, traceback
-        print(f"[SCAN] _process_scan started. filepath={filepath!r}")
         try:
             show_toast(page, "Procesando imagen con OCR…")
             from utils.ocr_scan import parse_department_report_image
-            print("[SCAN] calling OCR...")
             data = await asyncio.to_thread(parse_department_report_image, filepath)
-            print(f"[SCAN] OCR done. rows={len(data.get('rows', []))} errors={data.get('parse_errors')}")
         except RuntimeError as exc:
-            print(f"[SCAN] RuntimeError: {exc}")
             traceback.print_exc()
             _show_ocr_error(str(exc))
             return
         except Exception as exc:
-            print(f"[SCAN] Exception: {exc}")
             traceback.print_exc()
             show_toast(page, f"Error al procesar la imagen: {exc}", is_error=True)
             return
@@ -326,44 +315,24 @@ def reportes_view(page: ft.Page, user):
                     _os2.unlink(tmp_path)
                 except Exception:
                     pass
-        print("[SCAN] opening preview dialog...")
         _open_scan_preview(data)
 
-    def _on_scan_result(e):
-        print(f"[SCAN] on_result fired. files={e.files}")
-        if not e.files:
-            print("[SCAN] no files selected, returning")
-            return
-        file = e.files[0]
+    def _materialize_picked_file(file):
         filepath = file.path
-        bytes_len = len(file.bytes) if file.bytes else 0
-        print(f"[SCAN] name={file.name!r} path={filepath!r} bytes={bytes_len}")
+        if filepath:
+            return filepath, None
 
-        tmp_path = None
-        if not filepath:
-            if not file.bytes:
-                print("[SCAN] ERROR: no path and no bytes")
-                show_toast(page, "No se pudo leer la imagen", is_error=True)
-                return
-            import tempfile, os as _os
-            suffix = _os.path.splitext(file.name or "img.jpg")[1] or ".jpg"
-            try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                    tmp.write(file.bytes)
-                    tmp_path = tmp.name
-                filepath = tmp_path
-                print(f"[SCAN] saved bytes to tmp file: {tmp_path!r}")
-            except Exception as exc:
-                import traceback as _tb
-                print(f"[SCAN] ERROR saving tmp file: {exc}")
-                _tb.print_exc()
-                show_toast(page, f"Error guardando imagen: {exc}", is_error=True)
-                return
+        if not file.bytes:
+            raise ValueError("No se pudo leer la imagen seleccionada")
 
-        print(f"[SCAN] launching run_task with filepath={filepath!r}")
-        page.run_task(_process_scan, filepath, tmp_path)
+        import os as _os
+        import tempfile
 
-    _scan_picker.on_result = _on_scan_result
+        suffix = _os.path.splitext(file.name or "img.jpg")[1] or ".jpg"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(file.bytes)
+            tmp_path = tmp.name
+        return tmp_path, tmp_path
 
     def _show_ocr_error(msg: str):
         dlg = ft.AlertDialog(
@@ -414,7 +383,14 @@ def reportes_view(page: ft.Page, user):
         # Each item holds ft.TextField refs for every editable column
         class _RowCtrl:
             def __init__(self, r):
-                self.dept_num = r.get("dept_num", "")
+                self.dept_num = ft.TextField(
+                    value=str(r.get("dept_num", "") or ""),
+                    dense=True, text_size=SMALL_SIZE, width=48, text_align=ft.TextAlign.RIGHT,
+                    border_color=DIVIDER_COLOR,
+                    focused_border_color=PRIMARY,
+                    content_padding=ft.padding.symmetric(horizontal=6, vertical=4),
+                    keyboard_type=ft.KeyboardType.NUMBER,
+                )
                 self.desc = ft.TextField(
                     value=r.get("description", ""),
                     dense=True, text_size=SMALL_SIZE, expand=True,
@@ -470,7 +446,7 @@ def reportes_view(page: ft.Page, user):
                     except ValueError:
                         return 0
                 return {
-                    "dept_num": self.dept_num,
+                    "dept_num": self.dept_num.value or "",
                     "description": self.desc.value or "",
                     "items": _i(self.items.value),
                     "sales_gross": _f(self.gross.value),
@@ -492,11 +468,7 @@ def reportes_view(page: ft.Page, user):
 
         header_row = ft.Container(
             content=ft.Row([
-                ft.Container(
-                    content=ft.Text("#", size=SMALL_SIZE, weight=ft.FontWeight.BOLD,
-                                    color=TEXT_SECONDARY),
-                    width=36, padding=ft.padding.symmetric(horizontal=4, vertical=2),
-                ),
+                _hdr("#", w=48, align=ft.TextAlign.RIGHT),
                 ft.Container(
                     content=ft.Text("Nombre / Departamento", size=SMALL_SIZE,
                                     weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY),
@@ -519,11 +491,7 @@ def reportes_view(page: ft.Page, user):
                 result.append(
                     ft.Container(
                         content=ft.Row([
-                            ft.Container(
-                                content=ft.Text(ctrl.dept_num, size=SMALL_SIZE,
-                                                color=TEXT_SECONDARY),
-                                width=36, padding=ft.padding.symmetric(horizontal=4),
-                            ),
+                            ctrl.dept_num,
                             ctrl.desc,
                             ctrl.items,
                             ctrl.gross,
@@ -635,11 +603,24 @@ def reportes_view(page: ft.Page, user):
         page.show_dialog(dlg)
 
     async def _open_scan_dialog():
-        await _scan_picker.pick_files(
+        picker = ft.FilePicker()
+        files = await picker.pick_files(
             dialog_title="Seleccionar foto del reporte",
+            file_type=ft.FilePickerFileType.CUSTOM,
             allowed_extensions=["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp"],
             allow_multiple=False,
+            with_data=True,
         )
+        if not files:
+            return
+
+        try:
+            filepath, tmp_path = _materialize_picked_file(files[0])
+        except Exception as exc:
+            show_toast(page, f"Error guardando imagen: {exc}", is_error=True)
+            return
+
+        await _process_scan(filepath, tmp_path)
 
     async def _download_excel(shift: ShiftType | None, label: str):
         try:
@@ -651,7 +632,8 @@ def reportes_view(page: ft.Page, user):
             path = export_report_excel_bytes(data, selected_date, label)
             with open(path, "rb") as f:
                 file_bytes = f.read()
-            await _dl_picker.save_file(file_name=os.path.basename(path), src_bytes=file_bytes)
+            picker = ft.FilePicker()
+            await picker.save_file(file_name=os.path.basename(path), src_bytes=file_bytes)
             show_toast(page, f"Reporte '{label}' exportado correctamente", is_success=True)
         except Exception as exc:
             show_toast(page, f"Error al exportar: {exc}", is_error=True)
