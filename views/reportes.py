@@ -710,7 +710,11 @@ def reportes_view(page: ft.Page, user):
                 f"{result['saved']} departamentos guardados desde foto OCR",
             )
             _refresh_reports()
-            show_toast(page, f"{result['saved']} departamentos guardados correctamente.", is_success=True)
+            inv_count = len(result.get("inv_updated", []))
+            msg = f"{result['saved']} departamentos guardados."
+            if inv_count:
+                msg += f" Inventario actualizado: {inv_count} producto(s) descontado(s)."
+            show_toast(page, msg, is_success=True)
 
         table_col = ft.Column(
             [header_row] + _build_data_rows(),

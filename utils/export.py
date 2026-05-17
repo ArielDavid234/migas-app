@@ -1041,13 +1041,53 @@ def apply_scan_report(rows: list, applied_by_id) -> dict:
     return {"applied": applied, "skipped": skipped}
 
 
+def _match_product_for_scan(description: str, products: list):
+    """Fuzzy-match a scan department description to a Product. Returns Product or None."""
+    import difflib
+    import re as _re
+
+    def _normalize(s):
+        s = _re.sub(r"[^\w\s]", " ", s.lower())
+        return _re.sub(r"\s+", " ", s).strip()
+
+    desc = _normalize(description)
+    name_map = {_normalize(p.name): p for p in products}
+
+    # 1. Exact
+    if desc in name_map:
+        return name_map[desc]
+
+    # 2. Substring
+    for pname, prod in name_map.items():
+        if desc in pname or pname in desc:
+            return prod
+
+    # 3. Word overlap
+    desc_words = set(desc.split())
+    for pname, prod in name_map.items():
+        pwords = set(pname.split())
+        if desc_words and pwords:
+            overlap = len(desc_words & pwords)
+            min_len = min(len(desc_words), len(pwords))
+            if min_len > 0 and (overlap >= 2 or overlap / min_len >= 0.6):
+                return prod
+
+    # 4. difflib close match
+    matches = difflib.get_close_matches(desc, list(name_map.keys()), n=1, cutoff=0.65)
+    if matches:
+        return name_map[matches[0]]
+
+    return None
+
+
 def apply_department_scan_report(rows: list, report_date, user_id) -> dict:
     """
     Save confirmed department-sale rows (from DEPARTMENT REPORT OCR scan) to the DB.
     Creates a DepartmentSaleReport header + one DepartmentSaleRow per item.
-    Returns {saved: int, report_id: int}.
+    Also deducts sold quantities from matching active inventory products.
+    Returns {saved, report_id, inv_updated: list[dict], inv_not_matched: list[str]}.
     """
-    from database.models import DepartmentSaleReport, DepartmentSaleRow
+    from database.models import DepartmentSaleReport, DepartmentSaleRow, ProductStatus
     from datetime import date as _date
 
     session = get_session()
@@ -1075,7 +1115,36 @@ def apply_department_scan_report(rows: list, report_date, user_id) -> dict:
                 net_sales=float(r.get("net_sales") or 0.0),
             ))
 
+        # ── Deduct inventory ────────────────────────────────────
+        active_products = (
+            session.query(Product)
+            .filter(Product.status == ProductStatus.ACTIVE)
+            .all()
+        )
+
+        inv_updated = []
+        inv_not_matched = []
+
+        for r in rows:
+            qty = int(r.get("items") or 0)
+            if qty <= 0:
+                continue
+            desc = str(r.get("description", "") or "").strip()
+            if not desc:
+                continue
+            prod = _match_product_for_scan(desc, active_products)
+            if prod:
+                prod.stock = max(0, (prod.stock or 0) - qty)
+                inv_updated.append({"name": prod.name, "deducted": qty, "new_stock": prod.stock})
+            else:
+                inv_not_matched.append(desc)
+
         session.commit()
-        return {"saved": len(rows), "report_id": report.id}
+        return {
+            "saved": len(rows),
+            "report_id": report.id,
+            "inv_updated": inv_updated,
+            "inv_not_matched": inv_not_matched,
+        }
     finally:
         session.close()
