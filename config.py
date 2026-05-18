@@ -54,16 +54,54 @@ LOYALTY_PURCHASES_FOR_REWARD = 10
 # Ajusta las palabras clave según los nombres que usa tu caja registradora.
 # Cada categoría agrupa los departamentos cuya DESCRIPCIÓN contenga alguna de esas palabras.
 DEPT_CATEGORIES = {
-    "Gasolina":   ["gas", "gasoline", "gasolina", "fuel", "diesel", "unleaded",
-                   "premium", "regular", "super", "petrol"],
-    "Cafetería":  ["cafe", "cafeteria", "food", "deli", "hot", "cold", "drink",
-                   "beverage", "coffee", "pizza", "sandwich", "snack", "hot dog",
-                   "hotdog", "grill", "bakery", "faro", "pastry"],
-    "Rentas":     ["rent", "renta", "rental", "lease", "arrendamiento"],
-    "Servicios":  ["service", "servicio", "car wash", "lavado", "air",
-                   "phone", "propane", "propano", "utility", "utilities"],
-    "Delivery":   ["delivery", "deliver", "online", "doordash", "grubhub",
-                   "uber", "pickup", "pick up"],
+    "Gasolina": [
+        # English
+        "gas", "gasoline", "fuel", "unleaded", "diesel", "premium", "regular",
+        "super", "petrol", "e85", "ethanol", "octane", "gallon", "pump",
+        # Spanish
+        "gasolina", "combustible", "gasoil", "sin plomo",
+    ],
+    "Cafetería": [
+        # English — food
+        "cafe", "cafeteria", "food", "deli", "hot food", "cold food", "grill",
+        "bakery", "pastry", "pizza", "sandwich", "hotdog", "hot dog",
+        "breakfast", "lunch", "combo", "prepared", "kitchen", "grocery",
+        "general", "packaged", "merchandise", "tobacco", "cigarette", "cigar",
+        "vape", "candy", "chips", "snack",
+        # English — beverages
+        "drink", "beverage", "coffee", "soda", "fountain", "juice", "water",
+        "beer", "wine", "milk", "energy",
+        # Spanish — food
+        "comida", "cocina", "panaderia", "panadería", "reposteria",
+        "almuerzo", "desayuno", "merienda", "botana", "frituras",
+        # Spanish — beverages
+        "bebida", "agua", "cerveza", "jugo", "refresco", "leche",
+        # Spanish — store items
+        "tabaco", "cigarro", "cigarrillo", "dulce", "comestible",
+        "abarrote", "tienda", "mercancia", "mercancía",
+    ],
+    "Rentas": [
+        # English
+        "rent", "rental", "lease", "sublease", "atm", "space", "machine rental",
+        # Spanish
+        "renta", "arrendamiento", "alquiler", "maquina", "máquina",
+    ],
+    "Servicios": [
+        # English
+        "service", "car wash", "wash", "air", "propane", "phone card",
+        "phone", "utility", "utilities", "lottery", "money order",
+        "wire transfer", "western union", "western",
+        # Spanish
+        "servicio", "lavado", "propano", "tarjeta", "loteria", "lotería",
+        "giro", "transferencia", "aire", "orden de dinero",
+    ],
+    "Delivery": [
+        # English
+        "delivery", "deliver", "online", "doordash", "grubhub",
+        "uber eats", "ubereats", "pickup", "pick up", "order", "third party",
+        # Spanish
+        "entrega", "domicilio", "pedido", "en linea", "en línea",
+    ],
 }
 
 # Marcas de cigarros para reportes
