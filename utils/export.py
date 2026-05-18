@@ -456,7 +456,7 @@ def export_schedule_excel(week_start: date, filter_user_id: int | None = None) -
         session.close()
 
 
-def export_report_excel_bytes(reports_data: list, date_val, shift_label: str) -> str:
+def export_report_excel_bytes(reports_data: list, date_val, shift_label: str, dept_scan_rows=None, is_full_day=False) -> str:
     """
     Generate an Excel workbook from already-loaded report dicts and save to disk.
     Each dict must have keys: report, user_name, cigarettes, lottery, checks, tips, specials.
@@ -669,7 +669,7 @@ def export_report_excel_bytes(reports_data: list, date_val, shift_label: str) ->
     ws6 = wb.create_sheet("Especiales")
     ws6.append(["Productos Especiales - " + shift_label + "   |   " + date_str])
     ws6.cell(1, 1).font = Font(bold=True, size=13, color="0D47A1")
-    ws6.merge_cells("A1:C1")
+    ws6.merge_cells("A1:D1")
     ws6.row_dimensions[1].height = 20
     ws6.append([])
     for rd in reports_data:
@@ -688,7 +688,118 @@ def export_report_excel_bytes(reports_data: list, date_val, shift_label: str) ->
             _cell(ws6, 2, r, s.sold, fill=alt_fill if i % 2 else None, align=center)
             _cell(ws6, 3, r, s.remaining, fill=alt_fill if i % 2 else None, align=center)
         ws6.append([])
+
+    # ── Totales finales con corrección de escaneo (solo día completo) ──
+    if is_full_day and dept_scan_rows:
+        import difflib as _dl
+        import re as _re2
+        from collections import defaultdict
+
+        def _norm(s):
+            s = _re2.sub(r"[^\w\s]", " ", s.lower())
+            return _re2.sub(r"\s+", " ", s).strip()
+
+        # Build scan totals map: normalized_desc -> items (sum across all scan rows)
+        scan_totals = {}
+        for srow in dept_scan_rows:
+            desc = str(srow.get("description", "")).strip()
+            items = int(srow.get("items", 0))
+            if desc and items > 0:
+                key = _norm(desc)
+                scan_totals[key] = scan_totals.get(key, 0) + items
+
+        # Aggregate manual specials across all shifts
+        manual_agg = defaultdict(int)
+        manual_remaining = {}
+        for rd in reports_data:
+            for s in rd["specials"]:
+                manual_agg[s.item_name] += s.sold
+                manual_remaining[s.item_name] = s.remaining
+
+        if manual_agg and scan_totals:
+            dark_fill = PatternFill(start_color="37474F", end_color="37474F", fill_type="solid")
+            diff_fill = PatternFill(start_color="FFF3E0", end_color="FFF3E0", fill_type="solid")
+            ws6.append([])
+            r = ws6.max_row + 1
+            ws6.cell(r, 1).value = "TOTALES FINALES (con datos de escaneo)"
+            ws6.cell(r, 1).font = Font(bold=True, size=11, color="FFFFFF")
+            ws6.cell(r, 1).fill = dark_fill
+            ws6.merge_cells(f"A{r}:D{r}")
+            ws6.row_dimensions[r].height = 16
+
+            hdr_row = ws6.max_row + 1
+            for col, h in enumerate(["Producto", "Total Manual", "Cant. Escaneada", "Total Final"], 1):
+                _hdr(ws6, col, hdr_row, h, teal_fill)
+
+            scan_keys = list(scan_totals.keys())
+            for i, (item_name, manual_sold) in enumerate(sorted(manual_agg.items())):
+                norm_name = _norm(item_name)
+                scan_val = None
+                if norm_name in scan_totals:
+                    scan_val = scan_totals[norm_name]
+                else:
+                    matches = _dl.get_close_matches(norm_name, scan_keys, n=1, cutoff=0.6)
+                    if matches:
+                        scan_val = scan_totals[matches[0]]
+
+                used = scan_val if scan_val is not None else manual_sold
+                has_diff = scan_val is not None and scan_val != manual_sold
+                row_fill = diff_fill if has_diff else (alt_fill if i % 2 else None)
+
+                r = ws6.max_row + 1
+                _cell(ws6, 1, r, item_name, fill=row_fill)
+                _cell(ws6, 2, r, manual_sold, fill=row_fill, align=center)
+                _cell(ws6, 3, r, scan_val if scan_val is not None else "—", fill=row_fill, align=center)
+                _cell(ws6, 4, r, used, bold=True, fill=row_fill, align=center)
+
     _auto_width(ws6)
+
+    # Sheet 7 - Ventas por Departamento (escaneo)
+    if dept_scan_rows:
+        dept_fill = PatternFill(start_color="4A148C", end_color="4A148C", fill_type="solid")
+        ws7 = wb.create_sheet("Ventas x Dpto.")
+        ws7.append(["Ventas por Departamento (escaneo) - " + date_str])
+        ws7.cell(1, 1).font = Font(bold=True, size=13, color="0D47A1")
+        ws7.merge_cells("A1:G1")
+        ws7.row_dimensions[1].height = 20
+        ws7.append([])
+        hdr_row = ws7.max_row + 1
+        for col, h in enumerate(["Dpto.", "Descripcion", "Items", "Bruto", "Devoluciones", "Descuentos", "Neto"], 1):
+            _hdr(ws7, col, hdr_row, h, dept_fill)
+        total_items = 0
+        total_gross = 0.0
+        total_refunds = 0.0
+        total_disc = 0.0
+        total_net = 0.0
+        for i, srow in enumerate(dept_scan_rows):
+            gross = float(srow.get("sales_gross", 0))
+            refunds = float(srow.get("refunds", 0))
+            disc = float(srow.get("discounts", 0))
+            net = float(srow.get("net_sales", 0))
+            items = int(srow.get("items", 0))
+            r = ws7.max_row + 1
+            f = alt_fill if i % 2 else None
+            _cell(ws7, 1, r, srow.get("dept_num", ""), fill=f, align=center)
+            _cell(ws7, 2, r, srow.get("description", ""), fill=f)
+            _cell(ws7, 3, r, items, fill=f, align=center)
+            _cell(ws7, 4, r, gross, number_format="#,##0.00", fill=f, align=center)
+            _cell(ws7, 5, r, refunds, number_format="#,##0.00", fill=f, align=center)
+            _cell(ws7, 6, r, disc, number_format="#,##0.00", fill=f, align=center)
+            _cell(ws7, 7, r, net, number_format="#,##0.00", fill=f, align=center)
+            total_items += items
+            total_gross += gross
+            total_refunds += refunds
+            total_disc += disc
+            total_net += net
+        r = ws7.max_row + 1
+        _cell(ws7, 1, r, "TOTAL", bold=True, fill=total_fill)
+        _cell(ws7, 2, r, "", fill=total_fill)
+        _cell(ws7, 3, r, total_items, bold=True, fill=total_fill, align=center)
+        _cell(ws7, 4, r, total_gross, bold=True, number_format="#,##0.00", fill=total_fill, align=center)
+        _cell(ws7, 5, r, total_refunds, bold=True, number_format="#,##0.00", fill=total_fill, align=center)
+        _cell(ws7, 6, r, total_disc, bold=True, number_format="#,##0.00", fill=total_fill, align=center)
+        _cell(ws7, 7, r, total_net, bold=True, number_format="#,##0.00", fill=total_fill, align=center)
+        _auto_width(ws7)
 
     date_str_file = date_val.strftime("%Y%m%d") if hasattr(date_val, "strftime") else str(date_val)
     safe_label = shift_label.lower().replace(" ", "_").replace("/", "-")

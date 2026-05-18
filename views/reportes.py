@@ -796,10 +796,27 @@ def reportes_view(page: ft.Page, user):
         try:
             import os
             data = _load_reports(selected_date, shift, selected_user_id)
-            if not data:
+            dept_data = _load_department_reports(selected_date)
+            dept_rows = []
+            for dr in dept_data:
+                for row in dr["rows"]:
+                    dept_rows.append({
+                        "dept_num": row.dept_num or "",
+                        "description": row.description or "",
+                        "items": int(row.items or 0),
+                        "sales_gross": float(row.sales_gross or 0),
+                        "refunds": float(row.refunds or 0),
+                        "discounts": float(row.discounts or 0),
+                        "net_sales": float(row.net_sales or 0),
+                    })
+            if not data and not dept_rows:
                 show_toast(page, f"Sin reportes para descargar ({label})", is_error=True)
                 return
-            path = export_report_excel_bytes(data, selected_date, label)
+            path = export_report_excel_bytes(
+                data, selected_date, label,
+                dept_scan_rows=dept_rows,
+                is_full_day=(shift is None),
+            )
             with open(path, "rb") as f:
                 file_bytes = f.read()
             picker = ft.FilePicker()
