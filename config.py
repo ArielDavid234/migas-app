@@ -61,12 +61,21 @@ DEPT_CATEGORIES = {
         # Spanish
         "gasolina", "combustible", "gasoil", "sin plomo",
     ],
+    "Cigarros": [
+        # Top 10 US cigarette brands
+        "marlboro", "newport", "camel", "natural american spirit", "american spirit",
+        "pall mall", "l&m", "l & m", "lucky strike", "winston", "kool", "montego",
+        # Generic English
+        "cigarette", "cigarettes", "tobacco", "cigar", "cigars",
+        # Generic Spanish
+        "cigarrillo", "cigarrillos", "cigarro", "cigarros", "tabaco",
+    ],
     "Cafetería": [
         # English — food
         "cafe", "cafeteria", "food", "deli", "hot food", "cold food", "grill",
         "bakery", "pastry", "pizza", "sandwich", "hotdog", "hot dog",
         "breakfast", "lunch", "combo", "prepared", "kitchen", "grocery",
-        "general", "packaged", "merchandise", "tobacco", "cigarette", "cigar",
+        "general", "packaged", "merchandise",
         "vape", "candy", "chips", "snack",
         # English — beverages
         "drink", "beverage", "coffee", "soda", "fountain", "juice", "water",
@@ -77,7 +86,7 @@ DEPT_CATEGORIES = {
         # Spanish — beverages
         "bebida", "agua", "cerveza", "jugo", "refresco", "leche",
         # Spanish — store items
-        "tabaco", "cigarro", "cigarrillo", "dulce", "comestible",
+        "dulce", "comestible",
         "abarrote", "tienda", "mercancia", "mercancía",
     ],
     "Rentas": [

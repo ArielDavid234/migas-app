@@ -553,7 +553,7 @@ def export_report_excel_bytes(reports_data: list, date_val, shift_label: str, de
     ws2 = wb.create_sheet("Cigarros")
     ws2.append(["Contabilidad de Cigarros - " + shift_label + "   |   " + date_str])
     ws2.cell(1, 1).font = Font(bold=True, size=13, color="0D47A1")
-    ws2.merge_cells("A1:D1")
+    ws2.merge_cells("A1:G1")
     ws2.row_dimensions[1].height = 20
     ws2.append([])
     for rd in reports_data:
@@ -578,6 +578,70 @@ def export_report_excel_bytes(reports_data: list, date_val, shift_label: str, de
         _cell(ws2, 1, r, "TOTAL VENDIDOS", bold=True, fill=total_fill)
         _cell(ws2, 3, r, total_sold, bold=True, fill=total_fill, align=center)
         ws2.append([])
+
+    # ── Ventas de cigarros desde escaneo ──
+    if dept_scan_rows:
+        try:
+            from config import DEPT_CATEGORIES as _DC
+            _cig_kws = [kw.lower() for kw in _DC.get("Cigarros", [])]
+        except Exception:
+            _cig_kws = [
+                "marlboro", "newport", "camel", "american spirit",
+                "pall mall", "l&m", "lucky strike", "winston", "kool", "montego",
+                "cigarette", "tobacco", "cigarro", "tabaco",
+            ]
+
+        def _is_cigar_row(desc):
+            dl = desc.lower()
+            return any(kw in dl for kw in _cig_kws)
+
+        cig_scan_rows = [
+            sr for sr in dept_scan_rows
+            if _is_cigar_row(str(sr.get("description", "")))
+        ]
+        if cig_scan_rows:
+            dark_grn = PatternFill(start_color="1B5E20", end_color="1B5E20", fill_type="solid")
+            ws2.append([])
+            r = ws2.max_row + 1
+            ws2.cell(r, 1).value = "VENTAS DE CIGARROS (Escaneo)"
+            ws2.cell(r, 1).font = Font(bold=True, size=11, color="FFFFFF")
+            ws2.cell(r, 1).fill = dark_grn
+            ws2.merge_cells(f"A{r}:G{r}")
+            ws2.row_dimensions[r].height = 16
+
+            hdr_row = ws2.max_row + 1
+            for col, h in enumerate(
+                ["Dpto.", "Descripción", "Items", "Bruto", "Devoluciones", "Descuentos", "Neto"], 1
+            ):
+                _hdr(ws2, col, hdr_row, h, green_fill)
+
+            sc_items = 0; sc_gross = 0.0; sc_refunds = 0.0; sc_disc = 0.0; sc_net = 0.0
+            for i, srow in enumerate(cig_scan_rows):
+                gross   = float(srow.get("sales_gross", 0))
+                refunds = float(srow.get("refunds", 0))
+                disc    = float(srow.get("discounts", 0))
+                net     = float(srow.get("net_sales", 0))
+                items   = int(srow.get("items", 0))
+                r = ws2.max_row + 1
+                f = alt_fill if i % 2 else None
+                _cell(ws2, 1, r, srow.get("dept_num", ""),   fill=f, align=center)
+                _cell(ws2, 2, r, srow.get("description", ""), fill=f)
+                _cell(ws2, 3, r, items,   fill=f, align=center)
+                _cell(ws2, 4, r, gross,   number_format="#,##0.00", fill=f, align=center)
+                _cell(ws2, 5, r, refunds, number_format="#,##0.00", fill=f, align=center)
+                _cell(ws2, 6, r, disc,    number_format="#,##0.00", fill=f, align=center)
+                _cell(ws2, 7, r, net,     number_format="#,##0.00", fill=f, align=center)
+                sc_items += items; sc_gross += gross
+                sc_refunds += refunds; sc_disc += disc; sc_net += net
+
+            r = ws2.max_row + 1
+            _cell(ws2, 1, r, "TOTAL",   bold=True, fill=total_fill)
+            _cell(ws2, 2, r, "",         fill=total_fill)
+            _cell(ws2, 3, r, sc_items,   bold=True, fill=total_fill, align=center)
+            _cell(ws2, 4, r, sc_gross,   bold=True, number_format="#,##0.00", fill=total_fill, align=center)
+            _cell(ws2, 5, r, sc_refunds, bold=True, number_format="#,##0.00", fill=total_fill, align=center)
+            _cell(ws2, 6, r, sc_disc,    bold=True, number_format="#,##0.00", fill=total_fill, align=center)
+            _cell(ws2, 7, r, sc_net,     bold=True, number_format="#,##0.00", fill=total_fill, align=center)
     _auto_width(ws2)
 
     # Sheet 3 - Loteria
