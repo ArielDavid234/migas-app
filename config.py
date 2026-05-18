@@ -50,6 +50,22 @@ OCR_SPACE_API_KEY = "K84112862188957"
 # Compras necesarias para desbloquear una recompensa
 LOYALTY_PURCHASES_FOR_REWARD = 10
 
+# ── Mapeo de categorías para Ventas por Departamento (DEPARTMENT REPORT) ──
+# Ajusta las palabras clave según los nombres que usa tu caja registradora.
+# Cada categoría agrupa los departamentos cuya DESCRIPCIÓN contenga alguna de esas palabras.
+DEPT_CATEGORIES = {
+    "Gasolina":   ["gas", "gasoline", "gasolina", "fuel", "diesel", "unleaded",
+                   "premium", "regular", "super", "petrol"],
+    "Cafetería":  ["cafe", "cafeteria", "food", "deli", "hot", "cold", "drink",
+                   "beverage", "coffee", "pizza", "sandwich", "snack", "hot dog",
+                   "hotdog", "grill", "bakery", "faro", "pastry"],
+    "Rentas":     ["rent", "renta", "rental", "lease", "arrendamiento"],
+    "Servicios":  ["service", "servicio", "car wash", "lavado", "air",
+                   "phone", "propane", "propano", "utility", "utilities"],
+    "Delivery":   ["delivery", "deliver", "online", "doordash", "grubhub",
+                   "uber", "pickup", "pick up"],
+}
+
 # Marcas de cigarros para reportes
 DEFAULT_CIGARETTE_BRANDS = [
     "Marlboro Red", "Marlboro Gold", "Marlboro Menthol",

@@ -756,13 +756,86 @@ def export_report_excel_bytes(reports_data: list, date_val, shift_label: str, de
 
     # Sheet 7 - Ventas por Departamento (escaneo)
     if dept_scan_rows:
+        import re as _re3
         dept_fill = PatternFill(start_color="4A148C", end_color="4A148C", fill_type="solid")
+        cat_fill  = PatternFill(start_color="1A237E", end_color="1A237E", fill_type="solid")
         ws7 = wb.create_sheet("Ventas x Dpto.")
         ws7.append(["Ventas por Departamento (escaneo) - " + date_str])
         ws7.cell(1, 1).font = Font(bold=True, size=13, color="0D47A1")
         ws7.merge_cells("A1:G1")
         ws7.row_dimensions[1].height = 20
         ws7.append([])
+
+        # ── Resumen por categoría ────────────────────────────────
+        try:
+            from config import DEPT_CATEGORIES
+        except Exception:
+            DEPT_CATEGORIES = {}
+
+        def _classify(desc):
+            dl = desc.lower()
+            for cat, keywords in DEPT_CATEGORIES.items():
+                if any(kw in dl for kw in keywords):
+                    return cat
+            return "Otros"
+
+        from collections import defaultdict
+        cat_totals = defaultdict(lambda: {"items": 0, "gross": 0.0, "refunds": 0.0, "disc": 0.0, "net": 0.0})
+        for srow in dept_scan_rows:
+            cat = _classify(str(srow.get("description", "")))
+            cat_totals[cat]["items"]   += int(srow.get("items", 0))
+            cat_totals[cat]["gross"]   += float(srow.get("sales_gross", 0))
+            cat_totals[cat]["refunds"] += float(srow.get("refunds", 0))
+            cat_totals[cat]["disc"]    += float(srow.get("discounts", 0))
+            cat_totals[cat]["net"]     += float(srow.get("net_sales", 0))
+
+        r = ws7.max_row + 1
+        ws7.cell(r, 1).value = "RESUMEN POR CATEGORÍA"
+        ws7.cell(r, 1).font = Font(bold=True, size=11, color="FFFFFF")
+        ws7.cell(r, 1).fill = cat_fill
+        ws7.merge_cells(f"A{r}:G{r}")
+        ws7.row_dimensions[r].height = 16
+
+        hdr_row = ws7.max_row + 1
+        for col, h in enumerate(["Categoría", "", "Items", "Bruto", "Devoluciones", "Descuentos", "Neto"], 1):
+            _hdr(ws7, col, hdr_row, h, cat_fill)
+
+        # Fixed order: configured categories first, then Otros
+        ordered_cats = list(DEPT_CATEGORIES.keys()) + ["Otros"]
+        cat_grand = {"items": 0, "gross": 0.0, "refunds": 0.0, "disc": 0.0, "net": 0.0}
+        for i, cat in enumerate(ordered_cats):
+            if cat not in cat_totals:
+                continue
+            ct = cat_totals[cat]
+            f = alt_fill if i % 2 else None
+            r = ws7.max_row + 1
+            _cell(ws7, 1, r, cat, bold=True, fill=f)
+            _cell(ws7, 2, r, "", fill=f)
+            _cell(ws7, 3, r, ct["items"], fill=f, align=center)
+            _cell(ws7, 4, r, ct["gross"],   number_format="#,##0.00", fill=f, align=center)
+            _cell(ws7, 5, r, ct["refunds"], number_format="#,##0.00", fill=f, align=center)
+            _cell(ws7, 6, r, ct["disc"],    number_format="#,##0.00", fill=f, align=center)
+            _cell(ws7, 7, r, ct["net"],     number_format="#,##0.00", fill=f, align=center)
+            for k in cat_grand:
+                cat_grand[k] += ct[k]
+        r = ws7.max_row + 1
+        _cell(ws7, 1, r, "TOTAL", bold=True, fill=total_fill)
+        _cell(ws7, 2, r, "", fill=total_fill)
+        _cell(ws7, 3, r, cat_grand["items"],   bold=True, fill=total_fill, align=center)
+        _cell(ws7, 4, r, cat_grand["gross"],   bold=True, number_format="#,##0.00", fill=total_fill, align=center)
+        _cell(ws7, 5, r, cat_grand["refunds"], bold=True, number_format="#,##0.00", fill=total_fill, align=center)
+        _cell(ws7, 6, r, cat_grand["disc"],    bold=True, number_format="#,##0.00", fill=total_fill, align=center)
+        _cell(ws7, 7, r, cat_grand["net"],     bold=True, number_format="#,##0.00", fill=total_fill, align=center)
+
+        # ── Detalle completo ─────────────────────────────────────
+        ws7.append([])
+        r = ws7.max_row + 1
+        ws7.cell(r, 1).value = "DETALLE COMPLETO"
+        ws7.cell(r, 1).font = Font(bold=True, size=11, color="FFFFFF")
+        ws7.cell(r, 1).fill = dept_fill
+        ws7.merge_cells(f"A{r}:G{r}")
+        ws7.row_dimensions[r].height = 16
+
         hdr_row = ws7.max_row + 1
         for col, h in enumerate(["Dpto.", "Descripcion", "Items", "Bruto", "Devoluciones", "Descuentos", "Neto"], 1):
             _hdr(ws7, col, hdr_row, h, dept_fill)
