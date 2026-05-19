@@ -675,63 +675,32 @@ def _find_plu_header_positions(clusters: list) -> tuple:
     return None, {}
 
 
-def _build_plu_column_bounds(positions: dict) -> dict:
-    """Compute midpoint x-boundaries between PLU Sales Report columns."""
-    plu_x       = positions.get("plu",       0)
-    pkg_x       = positions.get("pkg",       plu_x + 90)
-    desc_x      = positions.get("desc",      pkg_x + 55)
-    dept_x      = positions.get("dept",      desc_x + 95)
-    count_x     = positions.get("count",     dept_x + 75)
-    price_x     = positions.get("price",     count_x + 40)
-    sales_x     = positions.get("sales",     price_x + 50)
-    pct_dept_x  = positions.get("pct_dept",  sales_x + 55)
-    pct_total_x = positions.get("pct_total", pct_dept_x + 55)
-
-    def _mid(a, b):
-        return int((a + b) / 2)
-
-    return {
-        "plu_pkg":        _mid(plu_x,      pkg_x),
-        "pkg_desc":       _mid(pkg_x,      desc_x),
-        "desc_dept":      _mid(desc_x,     dept_x),
-        "dept_count":     _mid(dept_x,     count_x),
-        "count_price":    _mid(count_x,    price_x),
-        "price_sales":    _mid(price_x,    sales_x),
-        "sales_pct":      _mid(sales_x,    pct_dept_x),
-        "pct_dept_total": _mid(pct_dept_x, pct_total_x),
-    }
+_PLU_COL_ORDER = ["plu", "pkg", "desc", "dept", "count", "price", "sales", "pct_dept", "pct_total"]
 
 
-def _cluster_plu_row_columns(cluster: dict, bounds: dict) -> dict:
-    """Bucket words in a PLU row cluster into named column slots."""
-    cols = {
-        "plu": [], "pkg": [], "desc": [], "dept": [],
-        "count": [], "price": [], "sales": [], "pct_dept": [], "pct_total": [],
-    }
+def _cluster_plu_row_columns(cluster: dict, positions: dict) -> dict:
+    """Assign each word to the column whose header left-edge is the largest
+    x-value that does not exceed the word's x-position (floor assignment).
+    This correctly handles right-aligned numeric columns: a narrow digit like
+    '1' may sit a few pixels to the RIGHT of the 'Count' header word start,
+    but it still falls in the Count bucket instead of the Price bucket,
+    because count_x <= '1'_x < price_x.
+    """
+    col_starts = sorted(
+        [(positions[c], c) for c in _PLU_COL_ORDER if c in positions],
+        key=lambda t: t[0],
+    )
+    cols = {c: [] for c in _PLU_COL_ORDER}
     for word in cluster["words"]:
         x = word["left"]
-        if x < bounds["plu_pkg"]:
-            cols["plu"].append(word["text"])
-        elif x < bounds["pkg_desc"]:
-            cols["pkg"].append(word["text"])
-        elif x < bounds["desc_dept"]:
-            cols["desc"].append(word["text"])
-        elif x < bounds["dept_count"]:
-            cols["dept"].append(word["text"])
-        elif x < bounds["count_price"]:
-            cols["count"].append(word["text"])
-        elif x < bounds["price_sales"]:
-            cols["price"].append(word["text"])
-        elif x < bounds["sales_pct"]:
-            cols["sales"].append(word["text"])
-        elif x < bounds["pct_dept_total"]:
-            cols["pct_dept"].append(word["text"])
-        else:
-            cols["pct_total"].append(word["text"])
-    return {
-        key: _normalize_field_text(" ".join(vals))
-        for key, vals in cols.items()
-    }
+        assigned = col_starts[0][1] if col_starts else "desc"
+        for col_x, col_name in col_starts:
+            if col_x <= x:
+                assigned = col_name
+            else:
+                break
+        cols[assigned].append(word["text"])
+    return {k: _normalize_field_text(" ".join(v)) for k, v in cols.items()}
 
 
 def _is_plu_data_row(cols: dict) -> bool:
@@ -750,15 +719,13 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
     """
     rows = []
     parse_errors = []
-    # Use a larger y_threshold so wide-table rows (with slight OCR y-variance)
-    # stay in the same cluster instead of being split.
-    clusters = _cluster_overlay_words(overlay_words, y_threshold=15)
+    # y_threshold=10: keeps all words in a single printed row together (OCR
+    # y-variance < 5px) while keeping adjacent rows separate (~15-20px apart).
+    clusters = _cluster_overlay_words(overlay_words, y_threshold=10)
     start_idx, positions = _find_plu_header_positions(clusters)
 
     if start_idx is None or len(positions) < 4:
         return rows, ["No se pudo identificar la cabecera del PLU Sales Report"]
-
-    bounds = _build_plu_column_bounds(positions)
 
     for cluster in clusters[start_idx + 1:]:
         text = _normalize_field_text(cluster["text"])
@@ -772,7 +739,7 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
         ):
             continue
 
-        cols = _cluster_plu_row_columns(cluster, bounds)
+        cols = _cluster_plu_row_columns(cluster, positions)
         if not _is_plu_data_row(cols):
             continue
 
