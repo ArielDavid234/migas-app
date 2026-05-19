@@ -630,26 +630,22 @@ def _is_plu_sales_report(raw_text: str) -> bool:
 
 
 def _find_plu_header_positions(clusters: list) -> tuple:
-    """Find column x-positions from the PLU Sales Report header.
-    Returns (start_idx, positions_dict) with keys:
+    """Find column x-positions from the PLU Sales Report column header row.
+    Returns (header_idx, positions_dict) with keys:
       plu, pkg, desc, dept, count, price, sales, pct_dept, pct_total.
+    Searches directly for the cluster containing DESCRIPTION + COUNT/PRICE,
+    avoiding the skip-and-search dance that could miss the header cluster.
     """
-    start_idx = None
-    positions = {}
-
     for index, cluster in enumerate(clusters):
         text_up = cluster["text"].upper()
-
-        if start_idx is None:
-            if "PLU" in text_up and (
-                "SALES" in text_up or "REPORT" in text_up or "NO" in text_up
-            ):
-                start_idx = index
-                continue
-
-        if start_idx is None:
+        # The column header row unambiguously contains DESCRIPTION and
+        # at least one of COUNT or PRICE.
+        if "DESCRIPTION" not in text_up:
+            continue
+        if "COUNT" not in text_up and "PRICE" not in text_up:
             continue
 
+        positions = {}
         for word in cluster["words"]:
             word_up = word["text"].upper().strip(".,;:!")
             left = word["left"]
@@ -673,10 +669,10 @@ def _find_plu_header_positions(clusters: list) -> tuple:
                 elif "pct_total" not in positions and left != positions.get("pct_dept"):
                     positions["pct_total"] = left
 
-        if len(positions) >= 5:
-            break
+        if len(positions) >= 4:
+            return index, positions
 
-    return start_idx, positions
+    return None, {}
 
 
 def _build_plu_column_bounds(positions: dict) -> dict:
@@ -754,7 +750,9 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
     """
     rows = []
     parse_errors = []
-    clusters = _cluster_overlay_words(overlay_words)
+    # Use a larger y_threshold so wide-table rows (with slight OCR y-variance)
+    # stay in the same cluster instead of being split.
+    clusters = _cluster_overlay_words(overlay_words, y_threshold=15)
     start_idx, positions = _find_plu_header_positions(clusters)
 
     if start_idx is None or len(positions) < 4:
@@ -802,13 +800,41 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
 
 def _parse_plu_report_lines(lines: list) -> tuple:
     """Fallback text parser for PLU Sales Report.
-    Each row: PLU_NO  PKG_QTY  DESCRIPTION [DEPARTMENT]  COUNT  PRICE  SALES  %DEPT  %TOTAL
-    In text mode, Description and Department are merged into one description field.
+    OCR text mode may split each product across multiple lines, so we join
+    consecutive lines that belong to the same row before parsing.
     """
     rows = []
     parse_errors = []
     in_report = False
 
+    # Pre-filter: strip blanks, skip header/footer noise
+    _SKIP_PAT = re.compile(
+        r"PLU\s*NO|PKG\s*\.?\s*QTY|DESCRIPTION|COUNT\s+PRICE"
+        r"|^PAGE\s+\d|GRAND\s+TOTAL|PLU\s+SALES\s+REPORT",
+        re.IGNORECASE,
+    )
+    _PLU_START = re.compile(r"^\d{8,15}\b")
+    _FULL_ROW  = re.compile(
+        r"^(\d{8,15})"
+        r"\s+(\d{1,2})"
+        r"\s+(.+?)"
+        r"\s+(\d{1,4})"
+        r"\s+\$?([\d.,]+)"
+        r"\s+\$?([\d.,]+)"
+        r"\s+[\d.,]+%?"
+        r"\s+[\d.,]+%?\s*$",
+    )
+    # Looser match when % columns are absent (just PLU qty desc count price sales)
+    _LOOSE_ROW = re.compile(
+        r"^(\d{8,15})"
+        r"\s+(\d{1,2})"
+        r"\s+(.+?)"
+        r"\s+(\d{1,4})"
+        r"\s+\$?([\d.,]+)"
+        r"\s+\$?([\d.,]+)\s*$",
+    )
+
+    clean_lines = []
     for line in lines:
         line = line.strip()
         if re.search(r"PLU\s+SALES\s+REPORT", line, re.IGNORECASE):
@@ -816,24 +842,18 @@ def _parse_plu_report_lines(lines: list) -> tuple:
             continue
         if not in_report or not line:
             continue
-        # Skip header / page marker lines
-        if re.search(
-            r"PLU\s*NO|PKG\s*\.?\s*QTY|DESCRIPTION|COUNT\s+PRICE|^PAGE\s+\d|GRAND\s+TOTAL",
-            line, re.IGNORECASE,
-        ):
+        if _SKIP_PAT.search(line):
             continue
+        clean_lines.append(line)
 
-        m = re.match(
-            r"^(\d{8,15})"          # PLU No.
-            r"\s+(\d{1,2})"         # Pkg. Qty
-            r"\s+(.+?)"             # Description + Department (merged in text mode)
-            r"\s+(\d{1,4})"         # Count
-            r"\s+\$?([\d.,]+)"      # Price
-            r"\s+\$?([\d.,]+)"      # Sales
-            r"\s+([\d.,]+)%?"       # % of Dept
-            r"\s+([\d.,]+)%?\s*$",  # % of Total
-            line,
-        )
+    # Join fragments: when a line is just a PLU number (possibly + pkg qty),
+    # merge it with the following lines until the joined text matches a row.
+    i = 0
+    while i < len(clean_lines):
+        line = clean_lines[i]
+
+        # Try single-line full match first
+        m = _FULL_ROW.match(line) or _LOOSE_ROW.match(line)
         if m:
             combined = m.group(3).strip()
             count    = int(m.group(4)) if m.group(4).isdigit() else 0
@@ -849,6 +869,37 @@ def _parse_plu_report_lines(lines: list) -> tuple:
                 "net_sales":   sales,
                 "price":       price,
             })
+            i += 1
+            continue
+
+        # If the line starts with a PLU number, try joining the next few lines
+        if _PLU_START.match(line):
+            joined = line
+            for j in range(i + 1, min(i + 5, len(clean_lines))):
+                joined = joined + " " + clean_lines[j]
+                m2 = _FULL_ROW.match(joined) or _LOOSE_ROW.match(joined)
+                if m2:
+                    combined = m2.group(3).strip()
+                    count    = int(m2.group(4)) if m2.group(4).isdigit() else 0
+                    price    = _parse_decimal(m2.group(5))
+                    sales    = _parse_decimal(m2.group(6))
+                    rows.append({
+                        "dept_num":    "",
+                        "description": combined,
+                        "items":       count,
+                        "sales_gross": sales,
+                        "refunds":     0.0,
+                        "discounts":   0.0,
+                        "net_sales":   sales,
+                        "price":       price,
+                    })
+                    i = j + 1
+                    break
+            else:
+                i += 1
+            continue
+
+        i += 1
 
     return rows, parse_errors
 
