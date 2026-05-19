@@ -727,7 +727,11 @@ def reportes_view(page: ft.Page, user):
             [
                 ft.Text(
                     "Revisa y corrige los valores antes de guardar." if has_rows
-                    else "No se detectaron departamentos. Asegurate de que la foto sea nítida y muestre el DEPARTMENT REPORT completo.",
+                    else (
+                        "No se detectaron productos PLU. Asegurate de que la foto sea nítida y muestre el PLU SALES REPORT completo."
+                        if is_plu
+                        else "No se detectaron departamentos. Asegurate de que la foto sea nítida y muestre el DEPARTMENT REPORT completo."
+                    ),
                     size=SMALL_SIZE, color=TEXT_SECONDARY,
                 ),
             ] + (extra_controls if extra_controls else []) + ([

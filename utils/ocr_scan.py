@@ -724,8 +724,12 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
     clusters = _cluster_overlay_words(overlay_words, y_threshold=10)
     start_idx, positions = _find_plu_header_positions(clusters)
 
+    import sys
+    print(f"[PLU DEBUG] overlay_words={len(overlay_words)}, clusters={len(clusters)}, start_idx={start_idx}, positions={positions}", file=sys.stderr)
+
     if start_idx is None or len(positions) < 4:
-        return rows, ["No se pudo identificar la cabecera del PLU Sales Report"]
+        diag = f"clusters={len(clusters)}, start_idx={start_idx}, positions={positions}"
+        return rows, [f"No se pudo identificar la cabecera del PLU Sales Report ({diag})"]
 
     for cluster in clusters[start_idx + 1:]:
         text = _normalize_field_text(cluster["text"])
@@ -741,6 +745,8 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
 
         cols = _cluster_plu_row_columns(cluster, positions)
         if not _is_plu_data_row(cols):
+            import sys
+            print(f"[PLU DEBUG] skip cluster text={text!r} | cols.plu={cols.get('plu')!r} cols.desc={cols.get('desc')!r}", file=sys.stderr)
             continue
 
         desc  = cols["desc"].strip()
@@ -891,7 +897,11 @@ def parse_department_report_image(image_path: str) -> dict:
     if api_key:
         overlay_data = _ocr_with_ocrspace_overlay(image_path, api_key)
         raw_text = overlay_data["raw_text"]
-        if _is_plu_sales_report(raw_text):
+        import sys
+        is_plu_flag = _is_plu_sales_report(raw_text)
+        print(f"[OCR DEBUG] raw_text[:300]={raw_text[:300]!r}", file=sys.stderr)
+        print(f"[OCR DEBUG] is_plu={is_plu_flag}, overlay_words={len(overlay_data['overlay_words'])}", file=sys.stderr)
+        if is_plu_flag:
             report_type = "plu"
             rows, parse_errors = _parse_plu_report_overlay_words(overlay_data["overlay_words"])
         else:
