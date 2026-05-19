@@ -651,7 +651,7 @@ def _find_plu_header_positions(clusters: list) -> tuple:
             left = word["left"]
             if word_up == "PLU" and "plu" not in positions:
                 positions["plu"] = left
-            elif word_up in {"PKG", "PKG."} and "pkg" not in positions:
+            elif word_up.startswith("PKG") and "pkg" not in positions:
                 positions["pkg"] = left
             elif word_up == "DESCRIPTION" and "desc" not in positions:
                 positions["desc"] = left

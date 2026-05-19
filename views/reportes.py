@@ -551,11 +551,13 @@ def reportes_view(page: ft.Page, user):
             def __init__(self, r):
                 self.dept_num = ft.TextField(
                     value=str(r.get("dept_num", "") or ""),
-                    dense=True, text_size=SMALL_SIZE, width=48, text_align=ft.TextAlign.RIGHT,
+                    dense=True, text_size=SMALL_SIZE,
+                    width=80 if is_plu else 48,
+                    text_align=ft.TextAlign.LEFT if is_plu else ft.TextAlign.RIGHT,
                     border_color=DIVIDER_COLOR,
                     focused_border_color=PRIMARY,
                     content_padding=ft.padding.symmetric(horizontal=6, vertical=4),
-                    keyboard_type=ft.KeyboardType.NUMBER,
+                    keyboard_type=ft.KeyboardType.TEXT if is_plu else ft.KeyboardType.NUMBER,
                 )
                 self.desc = ft.TextField(
                     value=r.get("description", ""),
@@ -634,9 +636,9 @@ def reportes_view(page: ft.Page, user):
 
         header_row = ft.Container(
             content=ft.Row([
-                _hdr("#", w=48, align=ft.TextAlign.RIGHT),
+                _hdr("Dept." if is_plu else "#", w=80 if is_plu else 48, align=ft.TextAlign.LEFT if is_plu else ft.TextAlign.RIGHT),
                 ft.Container(
-                    content=ft.Text("Nombre / Departamento", size=SMALL_SIZE,
+                    content=ft.Text("Descripción" if is_plu else "Nombre / Departamento", size=SMALL_SIZE,
                                     weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY),
                     expand=True, padding=ft.padding.symmetric(horizontal=4, vertical=2),
                 ),
