@@ -704,11 +704,18 @@ def _cluster_plu_row_columns(cluster: dict, positions: dict) -> dict:
 
 
 def _is_plu_data_row(cols: dict) -> bool:
-    """Return True if this cluster looks like a PLU Sales Report data row."""
-    plu_text = cols.get("plu", "").replace(" ", "")
-    return (
-        bool(re.match(r"^\d{8,15}$", plu_text))
-        and bool(cols.get("desc", "").strip())
+    """Return True if this cluster looks like a PLU Sales Report data row.
+    Uses description + at least one numeric field as the signal.
+    PLU No. is intentionally NOT checked: it is not needed in the output
+    and OCR frequently mis-reads or mis-assigns it.
+    """
+    desc = cols.get("desc", "").strip()
+    if not desc or len(desc) < 2:
+        return False
+    return bool(
+        cols.get("count", "").strip()
+        or cols.get("price", "").strip()
+        or cols.get("sales", "").strip()
     )
 
 
