@@ -670,6 +670,28 @@ def _find_plu_header_positions(clusters: list) -> tuple:
                     positions["pct_total"] = left
 
         if len(positions) >= 4:
+            # Shift column boundaries leftward to absorb OCR pixel noise and
+            # right-alignment overhang:
+            #   • Text column (dept): 5 px — data starts flush with column
+            #     left edge which is measured a few px right of actual edge.
+            #   • Numeric columns: 10 px — right-aligned values like "$11.00"
+            #     have their left edge up to 10 px further left than "$4.60"
+            #     in the same column.
+            # Each shifted value is clamped to at least 5 px after the
+            # previous column to prevent overlap.
+            _shift_map = {
+                "dept":      5,
+                "count":    10,
+                "price":    10,
+                "sales":    10,
+                "pct_dept": 10,
+                "pct_total": 10,
+            }
+            _prev_x = positions.get("desc", 0)
+            for _col in ["dept", "count", "price", "sales", "pct_dept", "pct_total"]:
+                if _col in positions:
+                    positions[_col] = max(_prev_x + 5, positions[_col] - _shift_map[_col])
+                    _prev_x = positions[_col]
             return index, positions
 
     return None, {}
@@ -752,11 +774,13 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
 
         cols = _cluster_plu_row_columns(cluster, positions)
 
-        # If Count/Price/Sales contain only text (no digits) it is a dept
-        # name word that overflowed past the Count column boundary.
+        # If Count/Price/Sales contain only text (no digits) AND the text
+        # is 4+ characters long, it is a department name word that overflowed
+        # past the column boundary.  Short noise like "NEN" (OCR misread of
+        # a digit) is left in place so the count fallback can handle it.
         for _spill in ("count", "price", "sales"):
             _v = cols.get(_spill, "")
-            if _v and not re.search(r"\d", _v):
+            if _v and not re.search(r"\d", _v) and len(_v) >= 4:
                 cols["dept"] = (cols.get("dept", "") + " " + _v).strip()
                 cols[_spill] = ""
 
@@ -776,6 +800,10 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
         sales     = _parse_money_text(cols["sales"]) or 0.0
         if not sales and price and count:
             sales = round(price * count, 2)
+        # OCR frequently misses small isolated count digits (1, 2, 5…).
+        # Derive count from sales÷price when both are available.
+        if not count and price and sales:
+            count = max(1, round(sales / price))
         pct_dept  = _parse_decimal(cols["pct_dept"].replace("%", "").strip()) or 0.0
         pct_total = _parse_decimal(cols["pct_total"].replace("%", "").strip()) or 0.0
 
