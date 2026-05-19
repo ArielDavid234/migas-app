@@ -849,8 +849,6 @@ def _parse_plu_report_lines(lines: list) -> tuple:
                 "net_sales":   sales,
                 "price":       price,
             })
-        elif re.match(r"^\d{8,15}\b", line):
-            parse_errors.append(f"No se pudo parsear línea PLU: {line[:70]}")
 
     return rows, parse_errors
 
