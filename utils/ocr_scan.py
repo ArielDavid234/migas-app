@@ -778,21 +778,22 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
 
         desc  = cols["desc"].strip()
         dept  = cols["dept"].strip()
-        count = _parse_items_text(cols["count"]) or 0
-        price = _parse_money_text(cols["price"]) or 0.0
-        sales = _parse_money_text(cols["sales"]) or 0.0
+        count     = _parse_items_text(cols["count"]) or 0
+        price     = _parse_money_text(cols["price"]) or 0.0
+        sales     = _parse_money_text(cols["sales"]) or 0.0
         if not sales and price and count:
             sales = round(price * count, 2)
+        pct_dept  = _parse_decimal(cols["pct_dept"].replace("%", "").strip()) or 0.0
+        pct_total = _parse_decimal(cols["pct_total"].replace("%", "").strip()) or 0.0
 
         rows.append({
             "dept_num":    dept,
             "description": desc,
-            "items":       count,
-            "sales_gross": sales,
-            "refunds":     0.0,
-            "discounts":   0.0,
-            "net_sales":   sales,
-            "price":       price,
+            "items":       count,       # Count
+            "sales_gross": price,       # Price
+            "refunds":     sales,       # Sales (count × price)
+            "discounts":   pct_dept,    # % of Dept
+            "net_sales":   pct_total,   # % of Total
         })
 
     return rows, parse_errors
@@ -862,12 +863,11 @@ def _parse_plu_report_lines(lines: list) -> tuple:
             rows.append({
                 "dept_num":    "",
                 "description": combined,
-                "items":       count,
-                "sales_gross": sales,
-                "refunds":     0.0,
-                "discounts":   0.0,
-                "net_sales":   sales,
-                "price":       price,
+                "items":       count,       # Count
+                "sales_gross": price,       # Price
+                "refunds":     sales,       # Sales (count × price)
+                "discounts":   0.0,         # % of Dept (not in text mode)
+                "net_sales":   0.0,         # % of Total (not in text mode)
             })
             i += 1
             continue
@@ -886,12 +886,11 @@ def _parse_plu_report_lines(lines: list) -> tuple:
                     rows.append({
                         "dept_num":    "",
                         "description": combined,
-                        "items":       count,
-                        "sales_gross": sales,
-                        "refunds":     0.0,
-                        "discounts":   0.0,
-                        "net_sales":   sales,
-                        "price":       price,
+                        "items":       count,       # Count
+                        "sales_gross": price,       # Price
+                        "refunds":     sales,       # Sales (count × price)
+                        "discounts":   0.0,         # % of Dept (not in text mode)
+                        "net_sales":   0.0,         # % of Total (not in text mode)
                     })
                     i = j + 1
                     break
@@ -920,11 +919,13 @@ def parse_department_report_image(image_path: str) -> dict:
     raw_text = ""
     rows = []
     parse_errors = []
+    report_type = "dept"
 
     if api_key:
         overlay_data = _ocr_with_ocrspace_overlay(image_path, api_key)
         raw_text = overlay_data["raw_text"]
         if _is_plu_sales_report(raw_text):
+            report_type = "plu"
             rows, parse_errors = _parse_plu_report_overlay_words(overlay_data["overlay_words"])
         else:
             rows, parse_errors = _parse_dept_report_overlay_words(overlay_data["overlay_words"])
@@ -932,6 +933,7 @@ def parse_department_report_image(image_path: str) -> dict:
     if not rows:
         raw_text = raw_text or _ocr_text(image_path)
         if _is_plu_sales_report(raw_text):
+            report_type = "plu"
             text_rows, text_errors = _parse_plu_report_lines(raw_text.splitlines())
         else:
             text_rows, text_errors = _parse_dept_report_lines(raw_text.splitlines())
@@ -939,4 +941,4 @@ def parse_department_report_image(image_path: str) -> dict:
             rows = text_rows
         parse_errors.extend(text_errors)
 
-    return {"rows": rows, "parse_errors": parse_errors, "raw_text": raw_text}
+    return {"rows": rows, "parse_errors": parse_errors, "raw_text": raw_text, "report_type": report_type}

@@ -543,6 +543,7 @@ def reportes_view(page: ft.Page, user):
         rows = data["rows"]
         parse_errors = data.get("parse_errors", [])
         raw_text = data.get("raw_text", "")
+        is_plu = data.get("report_type") == "plu"
 
         # ── Build editable row controls ──────────────────────────
         # Each item holds ft.TextField refs for every editable column
@@ -639,11 +640,11 @@ def reportes_view(page: ft.Page, user):
                                     weight=ft.FontWeight.BOLD, color=TEXT_SECONDARY),
                     expand=True, padding=ft.padding.symmetric(horizontal=4, vertical=2),
                 ),
-                _hdr("Items", w=60, align=ft.TextAlign.RIGHT),
-                _hdr("Bruto", w=80, align=ft.TextAlign.RIGHT),
-                _hdr("Devoluc.", w=80, align=ft.TextAlign.RIGHT),
-                _hdr("Descuento", w=80, align=ft.TextAlign.RIGHT),
-                _hdr("Neto", w=80, align=ft.TextAlign.RIGHT),
+                _hdr("Count" if is_plu else "Items", w=60, align=ft.TextAlign.RIGHT),
+                _hdr("Price" if is_plu else "Bruto", w=80, align=ft.TextAlign.RIGHT),
+                _hdr("Sales" if is_plu else "Devoluc.", w=80, align=ft.TextAlign.RIGHT),
+                _hdr("% Dept" if is_plu else "Descuento", w=80, align=ft.TextAlign.RIGHT),
+                _hdr("% Total" if is_plu else "Neto", w=80, align=ft.TextAlign.RIGHT),
             ], spacing=4),
             bgcolor=ft.Colors.with_opacity(0.06, PRIMARY),
             border_radius=ft.BorderRadius(6, 6, 0, 0),
