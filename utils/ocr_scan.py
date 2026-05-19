@@ -618,9 +618,247 @@ def _parse_dept_report_lines(lines: list) -> tuple:
     return rows, parse_errors
 
 
+# ── PLU Sales Report Parser ───────────────────────────────────
+
+def _is_plu_sales_report(raw_text: str) -> bool:
+    """Detect PLU Sales Report format (vs. old DEPARTMENT REPORT)."""
+    t = raw_text.upper()
+    return "PLU SALES REPORT" in t or (
+        "PLU" in t and "COUNT" in t and "PRICE" in t
+        and ("DESCRIPTION" in t or "DEPT" in t)
+    )
+
+
+def _find_plu_header_positions(clusters: list) -> tuple:
+    """Find column x-positions from the PLU Sales Report header.
+    Returns (start_idx, positions_dict) with keys:
+      plu, pkg, desc, dept, count, price, sales, pct_dept, pct_total.
+    """
+    start_idx = None
+    positions = {}
+
+    for index, cluster in enumerate(clusters):
+        text_up = cluster["text"].upper()
+
+        if start_idx is None:
+            if "PLU" in text_up and (
+                "SALES" in text_up or "REPORT" in text_up or "NO" in text_up
+            ):
+                start_idx = index
+                continue
+
+        if start_idx is None:
+            continue
+
+        for word in cluster["words"]:
+            word_up = word["text"].upper().strip(".,;:!")
+            left = word["left"]
+            if word_up == "PLU" and "plu" not in positions:
+                positions["plu"] = left
+            elif word_up in {"PKG", "PKG."} and "pkg" not in positions:
+                positions["pkg"] = left
+            elif word_up == "DESCRIPTION" and "desc" not in positions:
+                positions["desc"] = left
+            elif word_up == "DEPARTMENT" and "dept" not in positions:
+                positions["dept"] = left
+            elif word_up == "COUNT" and "count" not in positions:
+                positions["count"] = left
+            elif word_up == "PRICE" and "price" not in positions:
+                positions["price"] = left
+            elif word_up == "SALES" and "sales" not in positions:
+                positions["sales"] = left
+            elif word_up == "%":
+                if "pct_dept" not in positions:
+                    positions["pct_dept"] = left
+                elif "pct_total" not in positions and left != positions.get("pct_dept"):
+                    positions["pct_total"] = left
+
+        if len(positions) >= 5:
+            break
+
+    return start_idx, positions
+
+
+def _build_plu_column_bounds(positions: dict) -> dict:
+    """Compute midpoint x-boundaries between PLU Sales Report columns."""
+    plu_x       = positions.get("plu",       0)
+    pkg_x       = positions.get("pkg",       plu_x + 90)
+    desc_x      = positions.get("desc",      pkg_x + 55)
+    dept_x      = positions.get("dept",      desc_x + 95)
+    count_x     = positions.get("count",     dept_x + 75)
+    price_x     = positions.get("price",     count_x + 40)
+    sales_x     = positions.get("sales",     price_x + 50)
+    pct_dept_x  = positions.get("pct_dept",  sales_x + 55)
+    pct_total_x = positions.get("pct_total", pct_dept_x + 55)
+
+    def _mid(a, b):
+        return int((a + b) / 2)
+
+    return {
+        "plu_pkg":        _mid(plu_x,      pkg_x),
+        "pkg_desc":       _mid(pkg_x,      desc_x),
+        "desc_dept":      _mid(desc_x,     dept_x),
+        "dept_count":     _mid(dept_x,     count_x),
+        "count_price":    _mid(count_x,    price_x),
+        "price_sales":    _mid(price_x,    sales_x),
+        "sales_pct":      _mid(sales_x,    pct_dept_x),
+        "pct_dept_total": _mid(pct_dept_x, pct_total_x),
+    }
+
+
+def _cluster_plu_row_columns(cluster: dict, bounds: dict) -> dict:
+    """Bucket words in a PLU row cluster into named column slots."""
+    cols = {
+        "plu": [], "pkg": [], "desc": [], "dept": [],
+        "count": [], "price": [], "sales": [], "pct_dept": [], "pct_total": [],
+    }
+    for word in cluster["words"]:
+        x = word["left"]
+        if x < bounds["plu_pkg"]:
+            cols["plu"].append(word["text"])
+        elif x < bounds["pkg_desc"]:
+            cols["pkg"].append(word["text"])
+        elif x < bounds["desc_dept"]:
+            cols["desc"].append(word["text"])
+        elif x < bounds["dept_count"]:
+            cols["dept"].append(word["text"])
+        elif x < bounds["count_price"]:
+            cols["count"].append(word["text"])
+        elif x < bounds["price_sales"]:
+            cols["price"].append(word["text"])
+        elif x < bounds["sales_pct"]:
+            cols["sales"].append(word["text"])
+        elif x < bounds["pct_dept_total"]:
+            cols["pct_dept"].append(word["text"])
+        else:
+            cols["pct_total"].append(word["text"])
+    return {
+        key: _normalize_field_text(" ".join(vals))
+        for key, vals in cols.items()
+    }
+
+
+def _is_plu_data_row(cols: dict) -> bool:
+    """Return True if this cluster looks like a PLU Sales Report data row."""
+    plu_text = cols.get("plu", "").replace(" ", "")
+    return (
+        bool(re.match(r"^\d{8,15}$", plu_text))
+        and bool(cols.get("desc", "").strip())
+    )
+
+
+def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
+    """Parse PLU Sales Report from OCR.space overlay words.
+    Each data row maps to one output dict with keys:
+      dept_num, description, items, sales_gross, refunds, discounts, net_sales, price.
+    """
+    rows = []
+    parse_errors = []
+    clusters = _cluster_overlay_words(overlay_words)
+    start_idx, positions = _find_plu_header_positions(clusters)
+
+    if start_idx is None or len(positions) < 4:
+        return rows, ["No se pudo identificar la cabecera del PLU Sales Report"]
+
+    bounds = _build_plu_column_bounds(positions)
+
+    for cluster in clusters[start_idx + 1:]:
+        text = _normalize_field_text(cluster["text"])
+        if not text:
+            continue
+        text_up = text.upper()
+        # Skip header / footer / page marker rows
+        if re.search(
+            r"^PAGE\s+\d|GRAND\s+TOTAL|^PLU\s+NO|DESCRIPTION|DEPARTMENT|COUNT\s+PRICE",
+            text_up,
+        ):
+            continue
+
+        cols = _cluster_plu_row_columns(cluster, bounds)
+        if not _is_plu_data_row(cols):
+            continue
+
+        desc  = cols["desc"].strip()
+        dept  = cols["dept"].strip()
+        count = _parse_items_text(cols["count"]) or 0
+        price = _parse_money_text(cols["price"]) or 0.0
+        sales = _parse_money_text(cols["sales"]) or 0.0
+        if not sales and price and count:
+            sales = round(price * count, 2)
+
+        rows.append({
+            "dept_num":    dept,
+            "description": desc,
+            "items":       count,
+            "sales_gross": sales,
+            "refunds":     0.0,
+            "discounts":   0.0,
+            "net_sales":   sales,
+            "price":       price,
+        })
+
+    return rows, parse_errors
+
+
+def _parse_plu_report_lines(lines: list) -> tuple:
+    """Fallback text parser for PLU Sales Report.
+    Each row: PLU_NO  PKG_QTY  DESCRIPTION [DEPARTMENT]  COUNT  PRICE  SALES  %DEPT  %TOTAL
+    In text mode, Description and Department are merged into one description field.
+    """
+    rows = []
+    parse_errors = []
+    in_report = False
+
+    for line in lines:
+        line = line.strip()
+        if re.search(r"PLU\s+SALES\s+REPORT", line, re.IGNORECASE):
+            in_report = True
+            continue
+        if not in_report or not line:
+            continue
+        # Skip header / page marker lines
+        if re.search(
+            r"PLU\s*NO|PKG\s*\.?\s*QTY|DESCRIPTION|COUNT\s+PRICE|^PAGE\s+\d|GRAND\s+TOTAL",
+            line, re.IGNORECASE,
+        ):
+            continue
+
+        m = re.match(
+            r"^(\d{8,15})"          # PLU No.
+            r"\s+(\d{1,2})"         # Pkg. Qty
+            r"\s+(.+?)"             # Description + Department (merged in text mode)
+            r"\s+(\d{1,4})"         # Count
+            r"\s+\$?([\d.,]+)"      # Price
+            r"\s+\$?([\d.,]+)"      # Sales
+            r"\s+([\d.,]+)%?"       # % of Dept
+            r"\s+([\d.,]+)%?\s*$",  # % of Total
+            line,
+        )
+        if m:
+            combined = m.group(3).strip()
+            count    = int(m.group(4)) if m.group(4).isdigit() else 0
+            price    = _parse_decimal(m.group(5))
+            sales    = _parse_decimal(m.group(6))
+            rows.append({
+                "dept_num":    "",
+                "description": combined,
+                "items":       count,
+                "sales_gross": sales,
+                "refunds":     0.0,
+                "discounts":   0.0,
+                "net_sales":   sales,
+                "price":       price,
+            })
+        elif re.match(r"^\d{8,15}\b", line):
+            parse_errors.append(f"No se pudo parsear línea PLU: {line[:70]}")
+
+    return rows, parse_errors
+
+
 def parse_department_report_image(image_path: str) -> dict:
     """
-    OCR una imagen de DEPARTMENT REPORT y extrae las filas de ventas por departamento.
+    OCR una imagen de DEPARTMENT REPORT o PLU Sales Report y extrae filas de ventas.
+    Detecta automáticamente el formato (DEPARTMENT REPORT o PLU Sales Report).
     Devuelve: {"rows": [...], "parse_errors": [...], "raw_text": str}
     Lanza RuntimeError si no hay OCR disponible.
     """
@@ -637,11 +875,17 @@ def parse_department_report_image(image_path: str) -> dict:
     if api_key:
         overlay_data = _ocr_with_ocrspace_overlay(image_path, api_key)
         raw_text = overlay_data["raw_text"]
-        rows, parse_errors = _parse_dept_report_overlay_words(overlay_data["overlay_words"])
+        if _is_plu_sales_report(raw_text):
+            rows, parse_errors = _parse_plu_report_overlay_words(overlay_data["overlay_words"])
+        else:
+            rows, parse_errors = _parse_dept_report_overlay_words(overlay_data["overlay_words"])
 
     if not rows:
         raw_text = raw_text or _ocr_text(image_path)
-        text_rows, text_errors = _parse_dept_report_lines(raw_text.splitlines())
+        if _is_plu_sales_report(raw_text):
+            text_rows, text_errors = _parse_plu_report_lines(raw_text.splitlines())
+        else:
+            text_rows, text_errors = _parse_dept_report_lines(raw_text.splitlines())
         if text_rows:
             rows = text_rows
         parse_errors.extend(text_errors)
