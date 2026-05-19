@@ -649,7 +649,7 @@ def _find_plu_header_positions(clusters: list) -> tuple:
         for word in cluster["words"]:
             word_up = word["text"].upper().strip(".,;:!")
             left = word["left"]
-            if word_up == "PLU" and "plu" not in positions:
+            if word_up.startswith("PLU") and not word_up[3:4].isalpha() and "plu" not in positions:
                 positions["plu"] = left
             elif word_up.startswith("PKG") and "pkg" not in positions:
                 positions["pkg"] = left
@@ -751,12 +751,25 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
             continue
 
         cols = _cluster_plu_row_columns(cluster, positions)
+
+        # If Count/Price/Sales contain only text (no digits) it is a dept
+        # name word that overflowed past the Count column boundary.
+        for _spill in ("count", "price", "sales"):
+            _v = cols.get(_spill, "")
+            if _v and not re.search(r"\d", _v):
+                cols["dept"] = (cols.get("dept", "") + " " + _v).strip()
+                cols[_spill] = ""
+
         if not _is_plu_data_row(cols):
             import sys
             print(f"[PLU DEBUG] skip cluster text={text!r} | cols.plu={cols.get('plu')!r} cols.desc={cols.get('desc')!r}", file=sys.stderr)
             continue
 
         desc  = cols["desc"].strip()
+        # Strip any leading PLU number (8-15 digits) or Pkg.Qty digit that
+        # may have bled into the description column.
+        desc = re.sub(r"^\d{6,15}\s*", "", desc).strip()
+        desc = re.sub(r"^\d{1,2}\s+", "", desc).strip()
         dept  = cols["dept"].strip()
         count     = _parse_items_text(cols["count"]) or 0
         price     = _parse_money_text(cols["price"]) or 0.0
