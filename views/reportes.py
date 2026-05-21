@@ -463,8 +463,10 @@ def reportes_view(page: ft.Page, user):
     async def _process_scan(file_list: list):
         """OCR-process one or more (filepath, tmp_path) pairs and show a
         combined preview merging rows from every page."""
-        import asyncio, traceback, os as _os2
+        import asyncio, traceback, os as _os2, sys as _sys
         from utils.ocr_scan import parse_department_report_image
+
+        print(f"[SCAN] _process_scan START file_list={file_list}", file=_sys.stderr, flush=True)
 
         all_rows: list = []
         all_errors: list = []
@@ -475,13 +477,17 @@ def reportes_view(page: ft.Page, user):
         for i, (filepath, tmp_path) in enumerate(file_list):
             label = f"página {i + 1} de {total}" if total > 1 else "imagen"
             show_toast(page, f"Procesando {label} con OCR…")
+            print(f"[SCAN] calling OCR for filepath={filepath!r}", file=_sys.stderr, flush=True)
             try:
                 data = await asyncio.to_thread(parse_department_report_image, filepath)
+                print(f"[SCAN] OCR done: rows={len(data.get('rows', []))}, type={data.get('report_type')}", file=_sys.stderr, flush=True)
             except RuntimeError as exc:
+                print(f"[SCAN] RuntimeError: {exc}", file=_sys.stderr, flush=True)
                 traceback.print_exc()
                 _show_ocr_error(str(exc))
                 return
             except Exception as exc:
+                print(f"[SCAN] Exception: {type(exc).__name__}: {exc}", file=_sys.stderr, flush=True)
                 traceback.print_exc()
                 show_toast(page, f"Error al procesar la imagen: {exc}", is_error=True)
                 return
@@ -568,6 +574,8 @@ def reportes_view(page: ft.Page, user):
         page.show_dialog(dlg)
 
     def _open_scan_preview(data: dict):
+        import sys as _sys3
+        print(f"[SCAN] _open_scan_preview called: rows={len(data.get('rows', []))}, type={data.get('report_type')}", file=_sys3.stderr, flush=True)
         rows = data["rows"]
         parse_errors = data.get("parse_errors", [])
         raw_text = data.get("raw_text", "")
@@ -877,6 +885,8 @@ def reportes_view(page: ft.Page, user):
                 show_toast(page, f"Error guardando imagen: {exc}", is_error=True)
 
         async def _do_scan(e):
+            import sys as _sys2
+            print(f"[SCAN] _do_scan called, pending={len(pending)}", file=_sys2.stderr, flush=True)
             if not pending:
                 return
             page.pop_dialog()
