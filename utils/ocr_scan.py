@@ -696,6 +696,11 @@ def _is_plu_sales_report(raw_text: str) -> bool:
     # Continuation pages: PLU item codes (6+ digits) + at least one numeric column header
     if re.search(r"\b\d{6,15}\b", raw_text) and ("COUNT" in t or "PRICE" in t):
         return True
+    # Headerless continuation pages: 2+ lines that start with a long PLU item code.
+    # DEPT reports only use 1-4 digit dept numbers, so 6+ digit line-starters
+    # are a uniquely strong PLU signal even without any keyword markers.
+    if len(re.findall(r"(?m)^\d{6,}", raw_text)) >= 2:
+        return True
     return False
 
 
@@ -801,6 +806,91 @@ def _find_plu_header_positions(clusters: list) -> tuple:
 
 _PLU_COL_ORDER = ["plu", "pkg", "desc", "dept", "count", "price", "sales", "pct_dept", "pct_total"]
 
+# Regexes for format-based (headerless) row parsing
+_PLU_CODE_RE  = re.compile(r"^\d{6,15}$")
+_MONEY_VAL_RE = re.compile(r"^\$?\d{1,6}(?:[.,]\d{1,2})?$")
+_PCT_VAL_RE   = re.compile(r"^\d{1,3}(?:[.,]\d{1,2})?%?$")
+_INT_VAL_RE   = re.compile(r"^\d{1,4}$")
+
+
+def _parse_plu_row_by_format(cluster: dict) -> "dict | None":
+    """Parse one PLU data row by value format (right-to-left).
+
+    Works without column header positions — suitable for headerless continuation
+    pages.  Column order (fixed by POS printer):
+      PLU No. | Pkg Qty | Description | Department | Count | Price | Sales | %Dept | %Total
+    We skip columns 1-2, extract columns 5-9 from the right by format, and
+    treat the remaining middle words as Description (all but last) + Department (last).
+    """
+    words = [w for w in cluster["words"] if _normalize_word_text(w["text"])]
+    if len(words) < 5:
+        return None
+    texts = [_normalize_word_text(w["text"]) for w in words]
+
+    # First word must be a PLU code (digits only, 6-15 characters)
+    if not _PLU_CODE_RE.match(texts[0]):
+        return None
+
+    start = 1  # skip PLU code
+    # Skip pkg qty: 1-2 digit integer right after the PLU code
+    if start < len(texts) and re.match(r"^\d{1,2}$", texts[start]):
+        start += 1
+
+    right = len(texts) - 1
+    pct_total = pct_dept = sales_str = price_str = count_str = ""
+
+    # Parse right-to-left: %total, %dept, sales, price, count
+    if right >= start and _PCT_VAL_RE.match(texts[right]):
+        pct_total = texts[right]; right -= 1
+    if right >= start and _PCT_VAL_RE.match(texts[right]):
+        pct_dept = texts[right]; right -= 1
+    if right >= start and _MONEY_VAL_RE.match(texts[right]):
+        sales_str = texts[right]; right -= 1
+    if right >= start and _MONEY_VAL_RE.match(texts[right]):
+        price_str = texts[right]; right -= 1
+    if right >= start and _INT_VAL_RE.match(texts[right]):
+        count_str = texts[right]; right -= 1
+
+    if not price_str and not sales_str:
+        return None  # Not a numeric data row
+
+    # Middle words: Description + Department
+    middle = texts[start: right + 1]
+    if not middle:
+        desc, dept = "", ""
+    elif len(middle) == 1:
+        desc, dept = middle[0], ""
+    else:
+        dept = middle[-1]
+        desc = " ".join(middle[:-1])
+
+    # Strip stray PLU/pkg numbers that OCR may have bled into description
+    desc = re.sub(r"^\d{6,15}\s*", "", desc).strip()
+    desc = re.sub(r"^\d{1,2}\s+", "", desc).strip()
+
+    if not desc and not dept:
+        return None
+
+    count = _parse_items_text(count_str) or 0
+    price = _parse_money_text(price_str) or 0.0
+    sales = _parse_money_text(sales_str) or 0.0
+    if not sales and price and count:
+        sales = round(price * count, 2)
+    if not count and price and sales:
+        count = max(1, round(sales / price))
+    pct_d = _parse_decimal(pct_dept.replace("%", "").strip()) or 0.0
+    pct_t = _parse_decimal(pct_total.replace("%", "").strip()) or 0.0
+
+    return {
+        "dept_num":    dept,
+        "description": desc,
+        "items":       count,        # Count
+        "sales_gross": price,        # Price
+        "refunds":     sales,        # Sales
+        "discounts":   pct_d,        # % of Dept
+        "net_sales":   pct_t,        # % of Total
+    }
+
 
 def _cluster_plu_row_columns(cluster: dict, positions: dict) -> dict:
     """Assign each word to the column whose header left-edge is the largest
@@ -859,6 +949,18 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
     print(f"[PLU DEBUG] overlay_words={len(overlay_words)}, clusters={len(clusters)}, start_idx={start_idx}, positions={positions}", file=sys.stderr)
 
     if start_idx is None or len(positions) < 4:
+        # Headerless continuation page: try format-based parsing without column positions.
+        for _cluster in clusters:
+            _text_up = _cluster["text"].upper()
+            if re.search(r"^TOTAL\s+PLU|GRAND\s+TOTAL|TAX\s+COLLECTION", _text_up):
+                break
+            if re.search(r"^PAGE\s+\d|^PLU\s+NO|DESCRIPTION|DEPARTMENT|COUNT\s+PRICE", _text_up):
+                continue
+            _row = _parse_plu_row_by_format(_cluster)
+            if _row:
+                rows.append(_row)
+        if rows:
+            return rows, []
         diag = f"clusters={len(clusters)}, start_idx={start_idx}, positions={positions}"
         return rows, [f"No se pudo identificar la cabecera del PLU Sales Report ({diag})"]
 
@@ -980,6 +1082,9 @@ def _parse_plu_report_lines(lines: list) -> tuple:
         if re.search(r"PLU\s+SALES\s+REPORT", line, re.IGNORECASE):
             in_report = True
             continue
+        # Headerless continuation page: auto-start when a PLU data row is seen
+        if not in_report and _PLU_START.match(line):
+            in_report = True
         if not in_report or not line:
             continue
         if _SKIP_PAT.search(line):
