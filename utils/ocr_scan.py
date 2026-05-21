@@ -30,7 +30,6 @@ def _ocrspace_request(image_path: str, api_key: str, *, language: str = "spa", o
         "language": language,
         "isOverlayRequired": overlay,
         "detectOrientation": True,
-        "scale": True,
         "OCREngine": 2,  # Engine 2 = mejor para texto impreso
     }
 
