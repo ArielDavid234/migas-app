@@ -463,32 +463,64 @@ def reportes_view(page: ft.Page, user):
     async def _process_scan(file_list: list):
         """OCR-process one or more (filepath, tmp_path) pairs and show a
         combined preview merging rows from every page."""
-        import asyncio, traceback, os as _os2, sys as _sys
+        import asyncio, traceback, os as _os2
         from utils.ocr_scan import parse_department_report_image
 
-        print(f"[SCAN] _process_scan START file_list={file_list}", file=_sys.stderr, flush=True)
+        total = len(file_list)
+
+        # ── Show persistent progress dialog ──────────────────────
+        progress_text = ft.Text(
+            f"Analizando página 1 de {total}…",
+            size=BODY_SIZE, color=TEXT_SECONDARY,
+            text_align=ft.TextAlign.CENTER,
+        )
+        loading_dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.DOCUMENT_SCANNER, color=PRIMARY, size=20),
+                ft.Text("Procesando OCR", size=SUBTITLE_SIZE,
+                        weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
+            ], spacing=8),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.ProgressRing(width=40, height=40, stroke_width=3, color=PRIMARY),
+                    progress_text,
+                    ft.Text(
+                        "Puede tardar hasta 60 segundos por página.",
+                        size=SMALL_SIZE, color=TEXT_SECONDARY, italic=True,
+                        text_align=ft.TextAlign.CENTER,
+                    ),
+                ], spacing=14, horizontal_alignment=ft.CrossAxisAlignment.CENTER, tight=True),
+                width=320, padding=ft.padding.symmetric(vertical=8),
+            ),
+        )
+        page.show_dialog(loading_dlg)
+        page.update()
 
         all_rows: list = []
         all_errors: list = []
         all_raw: list = []
         report_type = None
-        total = len(file_list)
 
         for i, (filepath, tmp_path) in enumerate(file_list):
-            label = f"página {i + 1} de {total}" if total > 1 else "imagen"
-            show_toast(page, f"Procesando {label} con OCR…")
-            print(f"[SCAN] calling OCR for filepath={filepath!r}", file=_sys.stderr, flush=True)
+            progress_text.value = (
+                f"Analizando página {i + 1} de {total}…"
+                if total > 1 else "Analizando imagen con OCR…"
+            )
+            try:
+                loading_dlg.update()
+            except Exception:
+                pass
             try:
                 data = await asyncio.to_thread(parse_department_report_image, filepath)
-                print(f"[SCAN] OCR done: rows={len(data.get('rows', []))}, type={data.get('report_type')}", file=_sys.stderr, flush=True)
             except RuntimeError as exc:
-                print(f"[SCAN] RuntimeError: {exc}", file=_sys.stderr, flush=True)
                 traceback.print_exc()
+                page.pop_dialog()
                 _show_ocr_error(str(exc))
                 return
             except Exception as exc:
-                print(f"[SCAN] Exception: {type(exc).__name__}: {exc}", file=_sys.stderr, flush=True)
                 traceback.print_exc()
+                page.pop_dialog()
                 show_toast(page, f"Error al procesar la imagen: {exc}", is_error=True)
                 return
             finally:
@@ -504,13 +536,14 @@ def reportes_view(page: ft.Page, user):
             if report_type is None:
                 report_type = data.get("report_type")
 
+        page.pop_dialog()  # close progress dialog
+
         merged = {
             "rows": all_rows,
             "parse_errors": all_errors,
             "raw_text": "\n\n--- Página siguiente ---\n\n".join(all_raw),
             "report_type": report_type,
         }
-        print(f"[SCAN DEBUG] OCR complete. rows={len(all_rows)}, report_type={report_type}", flush=True)
         try:
             _open_scan_preview(merged)
         except Exception as _exc:
@@ -574,8 +607,6 @@ def reportes_view(page: ft.Page, user):
         page.show_dialog(dlg)
 
     def _open_scan_preview(data: dict):
-        import sys as _sys3
-        print(f"[SCAN] _open_scan_preview called: rows={len(data.get('rows', []))}, type={data.get('report_type')}", file=_sys3.stderr, flush=True)
         rows = data["rows"]
         parse_errors = data.get("parse_errors", [])
         raw_text = data.get("raw_text", "")
@@ -813,7 +844,6 @@ def reportes_view(page: ft.Page, user):
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
-        print("[SCAN DEBUG] Showing preview dialog", flush=True)
         page.show_dialog(dlg)
         page.update()
 
@@ -885,8 +915,6 @@ def reportes_view(page: ft.Page, user):
                 show_toast(page, f"Error guardando imagen: {exc}", is_error=True)
 
         async def _do_scan(e):
-            import sys as _sys2
-            print(f"[SCAN] _do_scan called, pending={len(pending)}", file=_sys2.stderr, flush=True)
             if not pending:
                 return
             page.pop_dialog()
