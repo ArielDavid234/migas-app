@@ -7,6 +7,46 @@ from database.db import get_session
 from database.models import Product, ProductStatus
 
 
+_OCR_MAX_BYTES = 1_400_000  # OCR.space free plan limit is 1.5 MB; use 1.4 MB to be safe
+
+
+def _compress_image_bytes(raw: bytes) -> tuple:
+    """Return (bytes, mime) compressed to fit within OCR.space free-plan limit.
+    Tries JPEG quality reduction first, then dimension scaling.
+    Falls back to original bytes if Pillow is unavailable.
+    """
+    if len(raw) <= _OCR_MAX_BYTES:
+        return raw, None  # no compression needed; caller keeps original mime
+
+    try:
+        import io
+        from PIL import Image
+    except ImportError:
+        return raw, None  # can't compress without Pillow
+
+    img = Image.open(io.BytesIO(raw)).convert("RGB")
+
+    # 1. Try quality reduction only (keeps full resolution)
+    for quality in (85, 75, 65, 55, 45):
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        if buf.tell() <= _OCR_MAX_BYTES:
+            return buf.getvalue(), "image/jpeg"
+
+    # 2. Scale down dimensions progressively
+    scale = 0.8
+    while scale >= 0.3:
+        w, h = img.size
+        resized = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        buf = io.BytesIO()
+        resized.save(buf, format="JPEG", quality=65, optimize=True)
+        if buf.tell() <= _OCR_MAX_BYTES:
+            return buf.getvalue(), "image/jpeg"
+        scale -= 0.15
+
+    return raw, None  # give up; API will return 413
+
+
 def _ocrspace_request(image_path: str, api_key: str, *, language: str = "spa", overlay: bool = False) -> dict:
     try:
         import requests
@@ -14,7 +54,9 @@ def _ocrspace_request(image_path: str, api_key: str, *, language: str = "spa", o
         raise RuntimeError("Instala 'requests': pip install requests")
 
     with open(image_path, "rb") as f:
-        img_b64 = base64.b64encode(f.read()).decode("utf-8")
+        raw_bytes = f.read()
+
+    compressed, compressed_mime = _compress_image_bytes(raw_bytes)
 
     ext = image_path.rsplit(".", 1)[-1].lower()
     fmt_map = {
@@ -22,7 +64,8 @@ def _ocrspace_request(image_path: str, api_key: str, *, language: str = "spa", o
         "bmp": "image/bmp", "tiff": "image/tiff", "tif": "image/tiff",
         "webp": "image/webp",
     }
-    mime = fmt_map.get(ext, "image/jpeg")
+    mime = compressed_mime or fmt_map.get(ext, "image/jpeg")
+    img_b64 = base64.b64encode(compressed).decode("utf-8")
 
     payload = {
         "apikey": api_key,
