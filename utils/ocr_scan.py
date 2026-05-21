@@ -686,10 +686,15 @@ def _is_plu_sales_report(raw_text: str) -> bool:
     t = raw_text.upper()
     if "PLU SALES REPORT" in t:
         return True
-    if "PLU" in t and "COUNT" in t and "PRICE" in t and ("DESCRIPTION" in t or "DEPT" in t):
+    # Column headers present — no strict requirement for "PLU" keyword, since
+    # continuation pages often don't repeat the report title and OCR can
+    # mis-read "PLU NO." on the column header line.
+    if "COUNT" in t and "PRICE" in t and ("DESCRIPTION" in t or "DEPARTMENT" in t):
         return True
-    # Continuation pages: presence of 8-15 digit PLU codes + Count/Price keywords
-    if re.search(r"\b\d{8,15}\b", raw_text) and ("COUNT" in t or "PRICE" in t):
+    if "COUNT" in t and "PRICE" in t and "SALES" in t:
+        return True
+    # Continuation pages: PLU item codes (6+ digits) + at least one numeric column header
+    if re.search(r"\b\d{6,15}\b", raw_text) and ("COUNT" in t or "PRICE" in t):
         return True
     return False
 
