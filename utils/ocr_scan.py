@@ -765,9 +765,12 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
         if not text:
             continue
         text_up = text.upper()
-        # Skip header / footer / page marker rows
+        # Stop at grand-total / summary footers — nothing useful follows.
+        if re.search(r"^TOTAL\s+PLU|GRAND\s+TOTAL|TAX\s+COLLECTION", text_up):
+            break
+        # Skip section headers, page markers, column-header repeats.
         if re.search(
-            r"^PAGE\s+\d|GRAND\s+TOTAL|^PLU\s+NO|DESCRIPTION|DEPARTMENT|COUNT\s+PRICE",
+            r"^PAGE\s+\d|^PLU\s+NO|DESCRIPTION|DEPARTMENT|COUNT\s+PRICE|STORE\s+CLOSE",
             text_up,
         ):
             continue
@@ -785,8 +788,21 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
                 cols[_spill] = ""
 
         if not _is_plu_data_row(cols):
-            import sys
-            print(f"[PLU DEBUG] skip cluster text={text!r} | cols.plu={cols.get('plu')!r} cols.desc={cols.get('desc')!r}", file=sys.stderr)
+            # May be a continuation line where the printer wrapped a long
+            # department or description to the next print line.  Append to
+            # the previous row only when: we already have at least one row,
+            # and this cluster has text only in the dept/desc buckets (no
+            # numeric columns filled).
+            _cont_dept = cols.get("dept", "").strip()
+            _cont_desc = cols.get("desc", "").strip()
+            if rows and (_cont_dept or _cont_desc) and not any(
+                cols.get(c, "").strip()
+                for c in ("count", "price", "sales", "pct_dept", "pct_total")
+            ):
+                if _cont_dept:
+                    rows[-1]["dept_num"] = (rows[-1].get("dept_num", "") + " " + _cont_dept).strip()
+                if _cont_desc:
+                    rows[-1]["description"] = (rows[-1].get("description", "") + " " + _cont_desc).strip()
             continue
 
         desc  = cols["desc"].strip()

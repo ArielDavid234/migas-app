@@ -460,28 +460,51 @@ def reportes_view(page: ft.Page, user):
     def _new_report(e):
         report_form_dialog(page, user.id, on_saved=_refresh_reports)
 
-    async def _process_scan(filepath: str, tmp_path):
-        import asyncio, traceback
-        try:
-            show_toast(page, "Procesando imagen con OCR…")
-            from utils.ocr_scan import parse_department_report_image
-            data = await asyncio.to_thread(parse_department_report_image, filepath)
-        except RuntimeError as exc:
-            traceback.print_exc()
-            _show_ocr_error(str(exc))
-            return
-        except Exception as exc:
-            traceback.print_exc()
-            show_toast(page, f"Error al procesar la imagen: {exc}", is_error=True)
-            return
-        finally:
-            if tmp_path:
-                try:
-                    import os as _os2
-                    _os2.unlink(tmp_path)
-                except Exception:
-                    pass
-        _open_scan_preview(data)
+    async def _process_scan(file_list: list):
+        """OCR-process one or more (filepath, tmp_path) pairs and show a
+        combined preview merging rows from every page."""
+        import asyncio, traceback, os as _os2
+        from utils.ocr_scan import parse_department_report_image
+
+        all_rows: list = []
+        all_errors: list = []
+        all_raw: list = []
+        report_type = None
+        total = len(file_list)
+
+        for i, (filepath, tmp_path) in enumerate(file_list):
+            label = f"página {i + 1} de {total}" if total > 1 else "imagen"
+            show_toast(page, f"Procesando {label} con OCR…")
+            try:
+                data = await asyncio.to_thread(parse_department_report_image, filepath)
+            except RuntimeError as exc:
+                traceback.print_exc()
+                _show_ocr_error(str(exc))
+                return
+            except Exception as exc:
+                traceback.print_exc()
+                show_toast(page, f"Error al procesar la imagen: {exc}", is_error=True)
+                return
+            finally:
+                if tmp_path:
+                    try:
+                        _os2.unlink(tmp_path)
+                    except Exception:
+                        pass
+
+            all_rows.extend(data.get("rows", []))
+            all_errors.extend(data.get("parse_errors", []))
+            all_raw.append(data.get("raw_text", ""))
+            if report_type is None:
+                report_type = data.get("report_type")
+
+        merged = {
+            "rows": all_rows,
+            "parse_errors": all_errors,
+            "raw_text": "\n\n--- Página siguiente ---\n\n".join(all_raw),
+            "report_type": report_type,
+        }
+        _open_scan_preview(merged)
 
     def _materialize_picked_file(file):
         filepath = file.path
@@ -782,22 +805,25 @@ def reportes_view(page: ft.Page, user):
     async def _open_scan_dialog():
         picker = ft.FilePicker()
         files = await picker.pick_files(
-            dialog_title="Seleccionar foto del reporte",
+            dialog_title="Seleccionar foto(s) del reporte (una por página)",
             file_type=ft.FilePickerFileType.CUSTOM,
             allowed_extensions=["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp"],
-            allow_multiple=False,
+            allow_multiple=True,
             with_data=True,
         )
         if not files:
             return
 
+        file_list = []
         try:
-            filepath, tmp_path = _materialize_picked_file(files[0])
+            for f in files:
+                filepath, tmp_path = _materialize_picked_file(f)
+                file_list.append((filepath, tmp_path))
         except Exception as exc:
             show_toast(page, f"Error guardando imagen: {exc}", is_error=True)
             return
 
-        await _process_scan(filepath, tmp_path)
+        await _process_scan(file_list)
 
     async def _download_excel(shift: ShiftType | None, label: str):
         try:
