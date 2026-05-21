@@ -807,6 +807,7 @@ def reportes_view(page: ft.Page, user):
         pending: list = []          # list of (filepath, tmp_path, display_name)
         pages_col = ft.Column(spacing=4)
         scan_btn_ref = ft.Ref[ft.ElevatedButton]()
+        scan_label = ft.Text("Escanear", color="white", size=SMALL_SIZE)
 
         def _refresh_pages_col():
             pages_col.controls.clear()
@@ -830,12 +831,14 @@ def reportes_view(page: ft.Page, user):
                         ], spacing=6)
                     )
             n = len(pending)
+            scan_label.value = (
+                f"Escanear {n} página{'s' if n != 1 else ''}" if n > 0 else "Escanear"
+            )
             if scan_btn_ref.current:
-                scan_btn_ref.current.text = (
-                    f"Escanear {n} página{'s' if n != 1 else ''}" if n > 0 else "Escanear"
-                )
                 scan_btn_ref.current.disabled = n == 0
                 scan_btn_ref.current.update()
+            if scan_label.page:
+                scan_label.update()
             if pages_col.page:
                 pages_col.update()
 
@@ -912,10 +915,14 @@ def reportes_view(page: ft.Page, user):
                 ),
                 ft.ElevatedButton(
                     ref=scan_btn_ref,
-                    text="Escanear",
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.DOCUMENT_SCANNER, size=16, color="white"),
+                        scan_label,
+                    ], spacing=6, tight=True),
                     disabled=True,
                     bgcolor=SUCCESS,
-                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6),
+                                         padding=ft.padding.symmetric(horizontal=12, vertical=8)),
                     on_click=_do_scan,
                 ),
             ],
