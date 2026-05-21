@@ -677,20 +677,32 @@ def _parse_dept_report_lines(lines: list) -> tuple:
 # ── PLU Sales Report Parser ───────────────────────────────────
 
 def _is_plu_sales_report(raw_text: str) -> bool:
-    """Detect PLU Sales Report format (vs. old DEPARTMENT REPORT)."""
+    """Detect PLU Sales Report format (vs. old DEPARTMENT REPORT).
+
+    Handles both title pages (contain 'PLU SALES REPORT') and continuation
+    pages that may only repeat the column headers or just show data rows with
+    long PLU item codes (8-15 digits).
+    """
     t = raw_text.upper()
-    return "PLU SALES REPORT" in t or (
-        "PLU" in t and "COUNT" in t and "PRICE" in t
-        and ("DESCRIPTION" in t or "DEPT" in t)
-    )
+    if "PLU SALES REPORT" in t:
+        return True
+    if "PLU" in t and "COUNT" in t and "PRICE" in t and ("DESCRIPTION" in t or "DEPT" in t):
+        return True
+    # Continuation pages: presence of 8-15 digit PLU codes + Count/Price keywords
+    if re.search(r"\b\d{8,15}\b", raw_text) and ("COUNT" in t or "PRICE" in t):
+        return True
+    return False
 
 
 def _find_plu_header_positions(clusters: list) -> tuple:
     """Find column x-positions from the PLU Sales Report column header row.
     Returns (header_idx, positions_dict) with keys:
       plu, pkg, desc, dept, count, price, sales, pct_dept, pct_total.
-    Searches directly for the cluster containing DESCRIPTION + COUNT/PRICE,
-    avoiding the skip-and-search dance that could miss the header cluster.
+
+    Many POS printers use a two-line column header where '% OF' appears on
+    the line above (or below) the DESCRIPTION/COUNT/PRICE line.  After finding
+    the main header cluster we scan ±2 adjacent clusters for the missing
+    pct_dept / pct_total positions.
     """
     for index, cluster in enumerate(clusters):
         text_up = cluster["text"].upper()
@@ -722,33 +734,62 @@ def _find_plu_header_positions(clusters: list) -> tuple:
             elif word_up == "%":
                 if "pct_dept" not in positions:
                     positions["pct_dept"] = left
-                elif "pct_total" not in positions and left != positions.get("pct_dept"):
+                elif "pct_total" not in positions and abs(left - positions.get("pct_dept", 0)) > 10:
                     positions["pct_total"] = left
 
-        if len(positions) >= 4:
-            # Shift column boundaries leftward to absorb OCR pixel noise and
-            # right-alignment overhang:
-            #   • Text column (dept): 5 px — data starts flush with column
-            #     left edge which is measured a few px right of actual edge.
-            #   • Numeric columns: 10 px — right-aligned values like "$11.00"
-            #     have their left edge up to 10 px further left than "$4.60"
-            #     in the same column.
-            # Each shifted value is clamped to at least 5 px after the
-            # previous column to prevent overlap.
-            _shift_map = {
-                "dept":      5,
-                "count":    10,
-                "price":    10,
-                "sales":    10,
-                "pct_dept": 10,
-                "pct_total": 10,
-            }
-            _prev_x = positions.get("desc", 0)
-            for _col in ["dept", "count", "price", "sales", "pct_dept", "pct_total"]:
-                if _col in positions:
-                    positions[_col] = max(_prev_x + 5, positions[_col] - _shift_map[_col])
-                    _prev_x = positions[_col]
-            return index, positions
+        if len(positions) < 4:
+            continue
+
+        # ── Two-line header: look at up to 2 adjacent clusters (before and
+        #    after this one) for the missing % OF DEPT / % OF TOTAL markers.
+        #    We skip any adjacent cluster that contains a long PLU item number
+        #    (6+ consecutive digits) to avoid picking up data-row words.
+        if "pct_dept" not in positions or "pct_total" not in positions:
+            _adj_range = (
+                list(range(max(0, index - 2), index))
+                + list(range(index + 1, min(len(clusters), index + 3)))
+            )
+            for _adj_idx in _adj_range:
+                adj_text_up = clusters[_adj_idx]["text"].upper()
+                if re.search(r"\d{6,}", adj_text_up):  # data row → stop looking
+                    continue
+                for word in clusters[_adj_idx]["words"]:
+                    word_up = word["text"].upper().strip(".,;:!")
+                    left = word["left"]
+                    if word_up == "%":
+                        if "pct_dept" not in positions:
+                            positions["pct_dept"] = left
+                        elif "pct_total" not in positions and abs(left - positions.get("pct_dept", 0)) > 10:
+                            positions["pct_total"] = left
+                    # Lone "DEPT" or "DEPT." well past the SALES column → pct_dept
+                    elif word_up in ("DEPT", "DEPT.") and "pct_dept" not in positions:
+                        _sales_x = positions.get("sales", positions.get("price", 0))
+                        if left > _sales_x + 15:
+                            positions["pct_dept"] = left
+                    # Lone "TOTAL" well past pct_dept → pct_total
+                    elif word_up == "TOTAL" and "pct_total" not in positions:
+                        _ref_x = positions.get("pct_dept", positions.get("sales", 0))
+                        if left > _ref_x + 15:
+                            positions["pct_total"] = left
+                if "pct_dept" in positions and "pct_total" in positions:
+                    break
+
+        # Shift column boundaries leftward to absorb OCR pixel noise and
+        # right-alignment overhang.  Applied AFTER all positions are collected.
+        _shift_map = {
+            "dept":       5,
+            "count":     10,
+            "price":     10,
+            "sales":     10,
+            "pct_dept":  10,
+            "pct_total": 10,
+        }
+        _prev_x = positions.get("desc", 0)
+        for _col in ["dept", "count", "price", "sales", "pct_dept", "pct_total"]:
+            if _col in positions:
+                positions[_col] = max(_prev_x + 5, positions[_col] - _shift_map[_col])
+                _prev_x = positions[_col]
+        return index, positions
 
     return None, {}
 
