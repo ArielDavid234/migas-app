@@ -803,27 +803,120 @@ def reportes_view(page: ft.Page, user):
         page.show_dialog(dlg)
 
     async def _open_scan_dialog():
-        picker = ft.FilePicker()
-        files = await picker.pick_files(
-            dialog_title="Seleccionar foto(s) del reporte (una por página)",
-            file_type=ft.FilePickerFileType.CUSTOM,
-            allowed_extensions=["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp"],
-            allow_multiple=True,
-            with_data=True,
+        """Diálogo de acumulación de páginas: el usuario añade fotos una a una."""
+        pending: list = []          # list of (filepath, tmp_path, display_name)
+        pages_col = ft.Column(spacing=4)
+        scan_btn_ref = ft.Ref[ft.ElevatedButton]()
+
+        def _refresh_pages_col():
+            pages_col.controls.clear()
+            if not pending:
+                pages_col.controls.append(
+                    ft.Text("No hay páginas añadidas aún.",
+                            size=SMALL_SIZE, color=TEXT_SECONDARY, italic=True)
+                )
+            else:
+                for idx, (_, _, name) in enumerate(pending):
+                    pages_col.controls.append(
+                        ft.Row([
+                            ft.Icon(ft.Icons.IMAGE, size=16, color=PRIMARY),
+                            ft.Text(f"Pág. {idx + 1} — {name}",
+                                    size=SMALL_SIZE, color=TEXT_PRIMARY, expand=True),
+                            ft.IconButton(
+                                ft.Icons.CLOSE, icon_size=14, icon_color=ERROR,
+                                tooltip="Eliminar",
+                                on_click=lambda e, i=idx: _remove_page(i),
+                            ),
+                        ], spacing=6)
+                    )
+            n = len(pending)
+            scan_btn_ref.current.text = (
+                f"Escanear {n} página{'s' if n != 1 else ''}" if n > 0 else "Escanear"
+            )
+            scan_btn_ref.current.disabled = n == 0
+            pages_col.update()
+            scan_btn_ref.current.update()
+
+        def _remove_page(idx):
+            _, tmp, _ = pending.pop(idx)
+            if tmp:
+                try:
+                    import os as _os3; _os3.unlink(tmp)
+                except Exception:
+                    pass
+            _refresh_pages_col()
+
+        async def _add_page(e):
+            picker = ft.FilePicker()
+            picked = await picker.pick_files(
+                dialog_title="Seleccionar foto de la página",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp"],
+                allow_multiple=False,
+                with_data=True,
+            )
+            if not picked:
+                return
+            try:
+                filepath, tmp_path = _materialize_picked_file(picked[0])
+                pending.append((filepath, tmp_path, picked[0].name or f"imagen_{len(pending)+1}"))
+                _refresh_pages_col()
+            except Exception as exc:
+                show_toast(page, f"Error guardando imagen: {exc}", is_error=True)
+
+        async def _do_scan(e):
+            if not pending:
+                return
+            page.pop_dialog()
+            file_list = [(fp, tp) for fp, tp, _ in pending]
+            await _process_scan(file_list)
+
+        _refresh_pages_col()
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.DOCUMENT_SCANNER, color=PRIMARY, size=22),
+                ft.Text("Escanear Reporte", size=SUBTITLE_SIZE,
+                        weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
+            ], spacing=8),
+            content=ft.Column([
+                ft.Text("Añade una foto por cada página del reporte.",
+                        size=BODY_SIZE, color=TEXT_SECONDARY),
+                ft.ElevatedButton(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.ADD_PHOTO_ALTERNATE, size=16, color="white"),
+                        ft.Text("Añadir página", size=SMALL_SIZE, color="white"),
+                    ], spacing=6, tight=True),
+                    bgcolor=PRIMARY,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6),
+                                         padding=ft.padding.symmetric(horizontal=12, vertical=8)),
+                    on_click=_add_page,
+                ),
+                ft.Divider(height=1, color=DIVIDER_COLOR),
+                ft.Container(
+                    content=pages_col,
+                    height=200,
+                    expand=False,
+                ),
+            ], spacing=10, width=380),
+            actions=[
+                ft.TextButton(
+                    content=ft.Text("Cancelar"),
+                    on_click=lambda e: page.pop_dialog(),
+                ),
+                ft.ElevatedButton(
+                    ref=scan_btn_ref,
+                    text="Escanear",
+                    disabled=True,
+                    bgcolor=SUCCESS,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
+                    on_click=_do_scan,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
         )
-        if not files:
-            return
-
-        file_list = []
-        try:
-            for f in files:
-                filepath, tmp_path = _materialize_picked_file(f)
-                file_list.append((filepath, tmp_path))
-        except Exception as exc:
-            show_toast(page, f"Error guardando imagen: {exc}", is_error=True)
-            return
-
-        await _process_scan(file_list)
+        page.show_dialog(dlg)
 
     async def _download_excel(shift: ShiftType | None, label: str):
         try:
