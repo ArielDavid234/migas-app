@@ -286,7 +286,7 @@ def reportes_view(page: ft.Page, user):
                     ft.DataColumn(ft.Text("Descripción", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
                     ft.DataColumn(ft.Text("Items", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
                     ft.DataColumn(ft.Text("Bruto", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Refunds", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Devoluciones", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
                     ft.DataColumn(ft.Text("Descuentos", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
                     ft.DataColumn(ft.Text("Neto", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
                 ],
@@ -504,7 +504,12 @@ def reportes_view(page: ft.Page, user):
             "raw_text": "\n\n--- Página siguiente ---\n\n".join(all_raw),
             "report_type": report_type,
         }
-        _open_scan_preview(merged)
+        print(f"[SCAN DEBUG] OCR complete. rows={len(all_rows)}, report_type={report_type}", flush=True)
+        try:
+            _open_scan_preview(merged)
+        except Exception as _exc:
+            traceback.print_exc()
+            show_toast(page, f"Error al mostrar vista previa: {_exc}", is_error=True)
 
     def _materialize_picked_file(file):
         filepath = file.path
@@ -800,7 +805,9 @@ def reportes_view(page: ft.Page, user):
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
+        print("[SCAN DEBUG] Showing preview dialog", flush=True)
         page.show_dialog(dlg)
+        page.update()
 
     async def _open_scan_dialog():
         """Diálogo de acumulación de páginas: el usuario añade fotos una a una."""
@@ -874,7 +881,12 @@ def reportes_view(page: ft.Page, user):
                 return
             page.pop_dialog()
             file_list = [(fp, tp) for fp, tp, _ in pending]
-            await _process_scan(file_list)
+            try:
+                await _process_scan(file_list)
+            except Exception as _exc:
+                import traceback as _tb
+                _tb.print_exc()
+                show_toast(page, f"Error inesperado en escaneo: {_exc}", is_error=True)
 
         # Build initial column content (no ref access needed here)
         pages_col.controls.append(
@@ -923,7 +935,7 @@ def reportes_view(page: ft.Page, user):
                     bgcolor=SUCCESS,
                     style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6),
                                          padding=ft.padding.symmetric(horizontal=12, vertical=8)),
-                    on_click=_do_scan,
+                    on_click=lambda e: page.run_task(_do_scan, e),
                 ),
             ],
             actions_alignment=ft.MainAxisAlignment.END,

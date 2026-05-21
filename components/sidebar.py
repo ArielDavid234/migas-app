@@ -153,7 +153,7 @@ def sidebar(page: ft.Page, user, on_navigate, on_logout, on_toggle_theme=None,
         content=ft.Row(
             [
                 ft.Icon(ft.Icons.BACKUP, color=SIDEBAR_TEXT, size=20),
-                ft.Text("Backup DB", color=SIDEBAR_TEXT, size=BODY_SIZE, font_family=FONT_FAMILY),
+                ft.Text("Copia de BD", color=SIDEBAR_TEXT, size=BODY_SIZE, font_family=FONT_FAMILY),
             ],
             spacing=12,
         ),

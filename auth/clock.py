@@ -64,7 +64,7 @@ def clock_view(page: ft.Page, user: User, on_clock_in, on_clock_out):
             session.add(record)
             session.commit()
             code_field.value = ""
-            status_text.value = f"✓ Clock In registrado a las {datetime.now().strftime('%H:%M')}"
+            status_text.value = f"✓ Entrada registrada a las {datetime.now().strftime('%H:%M')}"
             status_text.color = SUCCESS
             page.update()
             on_clock_in()
@@ -92,7 +92,7 @@ def clock_view(page: ft.Page, user: User, on_clock_in, on_clock_out):
             hours = active.hours_worked
             session.commit()
             code_field.value = ""
-            status_text.value = f"✓ Clock Out registrado. Horas trabajadas: {hours:.2f}h"
+            status_text.value = f"✓ Salida registrada. Horas trabajadas: {hours:.2f}h"
             status_text.color = SUCCESS
             page.update()
             on_clock_out()
@@ -121,7 +121,7 @@ def clock_view(page: ft.Page, user: User, on_clock_in, on_clock_out):
         session.close()
 
     clock_in_btn = ft.ElevatedButton(
-        content=ft.Row([ft.Icon(ft.Icons.LOGIN, color="white", size=18), ft.Text("Clock In", color="white")], spacing=6, tight=True),
+        content=ft.Row([ft.Icon(ft.Icons.LOGIN, color="white", size=18), ft.Text("Entrada", color="white")], spacing=6, tight=True),
         width=None if phone else 130,
         expand=phone,
         height=45,
@@ -131,7 +131,7 @@ def clock_view(page: ft.Page, user: User, on_clock_in, on_clock_out):
     )
 
     clock_out_btn = ft.ElevatedButton(
-        content=ft.Row([ft.Icon(ft.Icons.LOGOUT, color="white", size=18), ft.Text("Clock Out", color="white")], spacing=6, tight=True),
+        content=ft.Row([ft.Icon(ft.Icons.LOGOUT, color="white", size=18), ft.Text("Salida", color="white")], spacing=6, tight=True),
         width=None if phone else 130,
         expand=phone,
         height=45,
