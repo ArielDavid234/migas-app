@@ -34,13 +34,27 @@ def _ocrspace_request(image_path: str, api_key: str, *, language: str = "spa", o
         "OCREngine": 2,  # Engine 2 = mejor para texto impreso
     }
 
-    resp = requests.post(
-        "https://api.ocr.space/parse/image",
-        data=payload,
-        timeout=30,
-    )
-    if resp.status_code != 200:
-        raise RuntimeError(f"OCR.space error {resp.status_code}: {resp.text[:200]}")
+    import time as _time
+    last_exc: Exception | None = None
+    for _attempt in range(3):
+        try:
+            resp = requests.post(
+                "https://api.ocr.space/parse/image",
+                data=payload,
+                timeout=60,
+            )
+            if resp.status_code in (502, 503, 504):
+                last_exc = RuntimeError(f"OCR.space error {resp.status_code} (intento {_attempt + 1}/3)")
+                _time.sleep(3 * (_attempt + 1))
+                continue
+            if resp.status_code != 200:
+                raise RuntimeError(f"OCR.space error {resp.status_code}: {resp.text[:200]}")
+            break
+        except requests.exceptions.ConnectionError as exc:
+            last_exc = RuntimeError(f"Sin conexión con OCR.space (intento {_attempt + 1}/3): {exc}")
+            _time.sleep(3 * (_attempt + 1))
+    else:
+        raise last_exc
 
     data = resp.json()
     if data.get("IsErroredOnProcessing"):
