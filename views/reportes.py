@@ -830,12 +830,14 @@ def reportes_view(page: ft.Page, user):
                         ], spacing=6)
                     )
             n = len(pending)
-            scan_btn_ref.current.text = (
-                f"Escanear {n} página{'s' if n != 1 else ''}" if n > 0 else "Escanear"
-            )
-            scan_btn_ref.current.disabled = n == 0
-            pages_col.update()
-            scan_btn_ref.current.update()
+            if scan_btn_ref.current:
+                scan_btn_ref.current.text = (
+                    f"Escanear {n} página{'s' if n != 1 else ''}" if n > 0 else "Escanear"
+                )
+                scan_btn_ref.current.disabled = n == 0
+                scan_btn_ref.current.update()
+            if pages_col.page:
+                pages_col.update()
 
         def _remove_page(idx):
             _, tmp, _ = pending.pop(idx)
@@ -871,7 +873,11 @@ def reportes_view(page: ft.Page, user):
             file_list = [(fp, tp) for fp, tp, _ in pending]
             await _process_scan(file_list)
 
-        _refresh_pages_col()
+        # Build initial column content (no ref access needed here)
+        pages_col.controls.append(
+            ft.Text("No hay páginas añadidas aún.",
+                    size=SMALL_SIZE, color=TEXT_SECONDARY, italic=True)
+        )
 
         dlg = ft.AlertDialog(
             modal=True,
@@ -897,7 +903,6 @@ def reportes_view(page: ft.Page, user):
                 ft.Container(
                     content=pages_col,
                     height=200,
-                    expand=False,
                 ),
             ], spacing=10, width=380),
             actions=[
