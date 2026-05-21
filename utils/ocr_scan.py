@@ -818,23 +818,26 @@ def _parse_plu_row_by_format(cluster: dict) -> "dict | None":
 
     Works without column header positions — suitable for headerless continuation
     pages.  Column order (fixed by POS printer):
-      PLU No. | Pkg Qty | Description | Department | Count | Price | Sales | %Dept | %Total
-    We skip columns 1-2, extract columns 5-9 from the right by format, and
-    treat the remaining middle words as Description (all but last) + Department (last).
+      [PLU No.] [Pkg Qty] Description Department Count Price Sales %Dept %Total
+    Leading pure-digit words (PLU code / pkg qty) are skipped automatically
+    if present, but are NOT required.  Numeric columns are identified from
+    the right by their value format.
     """
     words = [w for w in cluster["words"] if _normalize_word_text(w["text"])]
-    if len(words) < 5:
+    if len(words) < 3:  # minimum: at least description + price + sales
         return None
     texts = [_normalize_word_text(w["text"]) for w in words]
 
-    # First word must be a PLU code (digits only, 6-15 characters)
-    if not _PLU_CODE_RE.match(texts[0]):
-        return None
-
-    start = 1  # skip PLU code
-    # Skip pkg qty: 1-2 digit integer right after the PLU code
-    if start < len(texts) and re.match(r"^\d{1,2}$", texts[start]):
+    # Optionally skip leading PLU code (4+ digits) and pkg qty (1-2 digits).
+    # We do NOT require them — some printers omit them on continuation pages.
+    start = 0
+    if re.match(r"^\d{4,}$", texts[start]):   # PLU code: 4+ digit string
         start += 1
+        if start < len(texts) and re.match(r"^\d{1,2}$", texts[start]):
+            start += 1  # pkg qty
+
+    if len(texts) - start < 3:
+        return None  # too few words after skipping leading codes
 
     right = len(texts) - 1
     pct_total = pct_dept = sales_str = price_str = count_str = ""
@@ -852,20 +855,20 @@ def _parse_plu_row_by_format(cluster: dict) -> "dict | None":
         count_str = texts[right]; right -= 1
 
     if not price_str and not sales_str:
-        return None  # Not a numeric data row
+        return None  # No numeric columns found — not a data row
 
-    # Middle words: Description + Department
+    # Middle words (start..right inclusive): Description + Department
     middle = texts[start: right + 1]
     if not middle:
         desc, dept = "", ""
     elif len(middle) == 1:
-        desc, dept = middle[0], ""
+        desc, dept = middle[0], ""  # single word treated as description
     else:
-        dept = middle[-1]
-        desc = " ".join(middle[:-1])
+        dept = middle[-1]           # last word = Department
+        desc = " ".join(middle[:-1])  # rest = Description
 
-    # Strip stray PLU/pkg numbers that OCR may have bled into description
-    desc = re.sub(r"^\d{6,15}\s*", "", desc).strip()
+    # Strip stray PLU/pkg numbers that may have bled into description
+    desc = re.sub(r"^\d{4,}\s*", "", desc).strip()
     desc = re.sub(r"^\d{1,2}\s+", "", desc).strip()
 
     if not desc and not dept:
@@ -950,11 +953,16 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
 
     if start_idx is None or len(positions) < 4:
         # Headerless continuation page: try format-based parsing without column positions.
-        for _cluster in clusters:
+        import sys as _sys
+        print(f"[PLU HEADERLESS] Trying format-based parse on {len(clusters)} clusters", file=_sys.stderr)
+        for _ci, _cluster in enumerate(clusters):
             _text_up = _cluster["text"].upper()
+            if _ci < 5:  # Print first 5 cluster texts for diagnosis
+                print(f"  [cluster {_ci}] {_cluster['text']!r}", file=_sys.stderr)
             if re.search(r"^TOTAL\s+PLU|GRAND\s+TOTAL|TAX\s+COLLECTION", _text_up):
                 break
-            if re.search(r"^PAGE\s+\d|^PLU\s+NO|DESCRIPTION|DEPARTMENT|COUNT\s+PRICE", _text_up):
+            # Only skip clusters where these words appear at the START (anchored)
+            if re.search(r"^PAGE\s+\d|^PLU\s+NO|^DESCRIPTION\b|^DEPARTMENT\b|COUNT\s+PRICE", _text_up):
                 continue
             _row = _parse_plu_row_by_format(_cluster)
             if _row:
