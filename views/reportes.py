@@ -792,6 +792,11 @@ def reportes_view(page: ft.Page, user):
             scroll=ft.ScrollMode.AUTO,
         )
 
+        # Dynamic table height: use 55% of page height or at least 250px
+        table_height = max(250, int((page.height or 700) * 0.55))
+        # Responsive dialog width: viewport width minus some margin
+        dialog_width = max(400, min(720, int((page.width or 800) - 48)))
+
         content_col = ft.Column(
             [
                 ft.Text(
@@ -805,7 +810,7 @@ def reportes_view(page: ft.Page, user):
                 ),
             ] + (extra_controls if extra_controls else []) + ([
                 ft.Divider(height=1, color=DIVIDER_COLOR),
-                ft.Container(content=table_col, height=420),
+                ft.Container(content=table_col, height=table_height),
                 ft.Divider(height=1, color=DIVIDER_COLOR),
                 ft.Text(
                     f"{len(row_ctrls)} departamento(s) detectados. Podés editar cualquier valor antes de confirmar.",
@@ -822,7 +827,7 @@ def reportes_view(page: ft.Page, user):
                 ft.Text("Vista Previa del Reporte",
                         size=SUBTITLE_SIZE, weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
             ], spacing=8),
-            content=ft.Container(content=content_col, width=720, padding=0),
+            content=ft.Container(content=content_col, width=dialog_width, padding=0),
             actions=[
                 ft.TextButton(
                     content=ft.Text("Cancelar"),

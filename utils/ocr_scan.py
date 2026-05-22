@@ -119,21 +119,37 @@ def _ocr_with_ocrspace_overlay(image_path: str, api_key: str) -> dict:
     results = data.get("ParsedResults", [])
     raw_text = "\n".join(r.get("ParsedText", "") for r in results) if results else ""
     overlay_words = []
+    overlay_lines = []   # OCR-defined line clusters — much more reliable than y-threshold
 
     for result in results:
         overlay = result.get("TextOverlay") or {}
         for line in overlay.get("Lines", []) or []:
+            line_words = []
             for word in line.get("Words", []) or []:
                 text = str(word.get("WordText", "") or "").strip()
                 if not text:
                     continue
-                overlay_words.append({
+                w = {
                     "text": text,
                     "left": int(word.get("Left", 0) or 0),
-                    "top": int(word.get("Top", 0) or 0),
+                    "top":  int(word.get("Top",  0) or 0),
+                }
+                overlay_words.append(w)
+                line_words.append(w)
+
+            if line_words:
+                # Sort left-to-right so the cluster matches _cluster_overlay_words output
+                line_words.sort(key=lambda w: w["left"])
+                cluster_text = " ".join(
+                    w["text"] for w in line_words if w["text"].strip()
+                )
+                overlay_lines.append({
+                    "top":   int(line.get("MinTop",  line_words[0]["top"])),
+                    "words": line_words,
+                    "text":  cluster_text,
                 })
 
-    return {"raw_text": raw_text, "overlay_words": overlay_words}
+    return {"raw_text": raw_text, "overlay_words": overlay_words, "overlay_lines": overlay_lines}
 
 
 def _ocr_with_tesseract(image_path: str) -> str:
@@ -543,10 +559,15 @@ def _fill_missing_dept_numbers(rows: list):
     return rows
 
 
-def _parse_dept_report_overlay_words(overlay_words: list) -> tuple:
+def _parse_dept_report_overlay_words(overlay_words: list, overlay_lines: list = None) -> tuple:
     rows = []
     parse_errors = []
-    clusters = _cluster_overlay_words(overlay_words)
+    # Use OCR-defined lines when available (reliable grouping already done by OCR engine).
+    # Fall back to y-threshold re-clustering only if overlay_lines is absent.
+    if overlay_lines:
+        clusters = overlay_lines
+    else:
+        clusters = _cluster_overlay_words(overlay_words)
     start_idx, positions = _find_report_header_positions(clusters)
 
     if start_idx is None or len(positions) < 4:
@@ -1019,30 +1040,26 @@ def _is_plu_data_row(cols: dict) -> bool:
     )
 
 
-def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
+def _parse_plu_report_overlay_words(overlay_words: list, overlay_lines: list = None) -> tuple:
     """Parse PLU Sales Report from OCR.space overlay words.
     Each data row maps to one output dict with keys:
       dept_num, description, items, sales_gross, refunds, discounts, net_sales, price.
     """
     rows = []
     parse_errors = []
-    # Compute y_threshold dynamically so compressed images (with small y-scale)
-    # are clustered correctly — adjacent rows must not be merged.
-    y_thresh = _auto_y_threshold(overlay_words)
-    clusters = _cluster_overlay_words(overlay_words, y_threshold=y_thresh)
+    # Use OCR-defined lines when available (reliable grouping already done by OCR engine).
+    # Fall back to y-threshold re-clustering only if overlay_lines is absent.
+    if overlay_lines:
+        clusters = overlay_lines
+    else:
+        y_thresh = _auto_y_threshold(overlay_words)
+        clusters = _cluster_overlay_words(overlay_words, y_threshold=y_thresh)
     start_idx, positions = _find_plu_header_positions(clusters)
-
-    import sys
-    print(f"[PLU DEBUG] overlay_words={len(overlay_words)}, y_thresh={y_thresh}, clusters={len(clusters)}, start_idx={start_idx}, positions={positions}", file=sys.stderr)
 
     if start_idx is None or len(positions) < 4:
         # Headerless continuation page: try format-based parsing without column positions.
-        import sys as _sys
-        print(f"[PLU HEADERLESS] Trying format-based parse on {len(clusters)} clusters", file=_sys.stderr)
-        for _ci, _cluster in enumerate(clusters):
+        for _cluster in clusters:
             _text_up = _cluster["text"].upper()
-            if _ci < 5:  # Print first 5 cluster texts for diagnosis
-                print(f"  [cluster {_ci}] {_cluster['text']!r}", file=_sys.stderr)
             if re.search(r"^TOTAL\s+PLU|GRAND\s+TOTAL|TAX\s+COLLECTION", _text_up):
                 break
             # Only skip clusters where these words appear at the START (anchored)
@@ -1260,15 +1277,13 @@ def parse_department_report_image(image_path: str) -> dict:
     if api_key:
         overlay_data = _ocr_with_ocrspace_overlay(image_path, api_key)
         raw_text = overlay_data["raw_text"]
-        import sys
         is_plu_flag = _is_plu_sales_report(raw_text)
-        print(f"[OCR DEBUG] raw_text[:300]={raw_text[:300]!r}", file=sys.stderr)
-        print(f"[OCR DEBUG] is_plu={is_plu_flag}, overlay_words={len(overlay_data['overlay_words'])}", file=sys.stderr)
+        _ov_lines = overlay_data.get("overlay_lines") or []
         if is_plu_flag:
             report_type = "plu"
-            rows, parse_errors = _parse_plu_report_overlay_words(overlay_data["overlay_words"])
+            rows, parse_errors = _parse_plu_report_overlay_words(overlay_data["overlay_words"], _ov_lines)
         else:
-            rows, parse_errors = _parse_dept_report_overlay_words(overlay_data["overlay_words"])
+            rows, parse_errors = _parse_dept_report_overlay_words(overlay_data["overlay_words"], _ov_lines)
 
     if not rows:
         raw_text = raw_text or _ocr_text(image_path)
