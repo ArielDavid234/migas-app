@@ -826,10 +826,27 @@ def _parse_plu_row_by_format(cluster: dict) -> "dict | None":
     words = [w for w in cluster["words"] if _normalize_word_text(w["text"])]
     if len(words) < 3:  # minimum: at least description + price + sales
         return None
-    texts = [_normalize_word_text(w["text"]) for w in words]
+    raw_texts = [_normalize_word_text(w["text"]) for w in words]
+
+    # ── Preprocess: merge split OCR tokens ──────────────────────────────────
+    # OCR often outputs "$ 4.89" as two words ('$','4.89') and
+    # "5.25 %" as two words ('5.25','%').  Merge them before parsing.
+    texts: list = []
+    idx = 0
+    while idx < len(raw_texts):
+        t = raw_texts[idx]
+        if t == "$" and idx + 1 < len(raw_texts) and re.match(r"^\d", raw_texts[idx + 1]):
+            texts.append("$" + raw_texts[idx + 1])
+            idx += 2
+        elif t not in ("$", "%") and idx + 1 < len(raw_texts) and raw_texts[idx + 1] == "%":
+            texts.append(t + "%")
+            idx += 2
+        else:
+            texts.append(t)
+            idx += 1
+    # ────────────────────────────────────────────────────────────────────────
 
     # Optionally skip leading PLU code (4+ digits) and pkg qty (1-2 digits).
-    # We do NOT require them — some printers omit them on continuation pages.
     start = 0
     if re.match(r"^\d{4,}$", texts[start]):   # PLU code: 4+ digit string
         start += 1
@@ -871,7 +888,9 @@ def _parse_plu_row_by_format(cluster: dict) -> "dict | None":
     desc = re.sub(r"^\d{4,}\s*", "", desc).strip()
     desc = re.sub(r"^\d{1,2}\s+", "", desc).strip()
 
-    if not desc and not dept:
+    # Reject rows where description/dept contain no letters
+    # (e.g. clusters that are just a list of monetary values)
+    if not re.search(r"[A-Za-z]", desc + dept):
         return None
 
     count = _parse_items_text(count_str) or 0
