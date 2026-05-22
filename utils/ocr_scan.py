@@ -339,6 +339,33 @@ def _parse_dept_text(text: str):
     return matches[-1] if matches else ""
 
 
+def _auto_y_threshold(words: list) -> int:
+    """Compute a row-clustering y-threshold that adapts to the image's pixel scale.
+
+    After JPEG compression the submitted image may be much smaller than the
+    original, compressing all y-coordinates proportionally.  A fixed 10-pixel
+    threshold that works on a 3000-px-tall photo will merge rows on a 600-px
+    compressed image (where each row is only ~4 px tall).
+
+    We estimate the threshold from the median gap between distinct top-values
+    seen in the overlay words, which equals the effective row height.
+    """
+    if len(words) < 10:
+        return 8
+    tops = sorted({w["top"] for w in words})
+    if len(tops) < 4:
+        return 8
+    gaps = [tops[i + 1] - tops[i] for i in range(len(tops) - 1)]
+    # Keep inter-line gaps: skip noise (<2 px) and large blank sections (>60 px)
+    inter = sorted(g for g in gaps if 2 <= g <= 60)
+    if len(inter) < 3:
+        return 8
+    row_height = inter[len(inter) // 2]   # median
+    # Threshold = 45 % of row height: absorbs same-line y-jitter while
+    # keeping adjacent rows (~1 row_height apart) in separate clusters.
+    return max(2, int(row_height * 0.45))
+
+
 def _cluster_overlay_words(words: list, y_threshold: int = 8) -> list:
     clusters = []
     for word in sorted(words, key=lambda item: (item["top"], item["left"])):
@@ -962,13 +989,14 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
     """
     rows = []
     parse_errors = []
-    # y_threshold=10: keeps all words in a single printed row together (OCR
-    # y-variance < 5px) while keeping adjacent rows separate (~15-20px apart).
-    clusters = _cluster_overlay_words(overlay_words, y_threshold=10)
+    # Compute y_threshold dynamically so compressed images (with small y-scale)
+    # are clustered correctly — adjacent rows must not be merged.
+    y_thresh = _auto_y_threshold(overlay_words)
+    clusters = _cluster_overlay_words(overlay_words, y_threshold=y_thresh)
     start_idx, positions = _find_plu_header_positions(clusters)
 
     import sys
-    print(f"[PLU DEBUG] overlay_words={len(overlay_words)}, clusters={len(clusters)}, start_idx={start_idx}, positions={positions}", file=sys.stderr)
+    print(f"[PLU DEBUG] overlay_words={len(overlay_words)}, y_thresh={y_thresh}, clusters={len(clusters)}, start_idx={start_idx}, positions={positions}", file=sys.stderr)
 
     if start_idx is None or len(positions) < 4:
         # Headerless continuation page: try format-based parsing without column positions.
