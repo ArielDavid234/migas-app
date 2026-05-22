@@ -358,16 +358,29 @@ def _parse_dept_text(text: str):
 def _auto_y_threshold(words: list) -> int:
     """Compute a row-clustering y-threshold that adapts to the image's pixel scale.
 
-    After JPEG compression the submitted image may be much smaller than the
-    original, compressing all y-coordinates proportionally.  A fixed 10-pixel
-    threshold that works on a 3000-px-tall photo will merge rows on a 600-px
-    compressed image (where each row is only ~4 px tall).
+    Primary method: derive the true row pitch from the y-gap between
+    consecutive PLU barcodes (8-15 digit strings that appear exactly once per
+    data row).  Returns 70 % of that pitch so same-row words are grouped while
+    adjacent rows stay separate.
 
-    We estimate the threshold from the median gap between distinct top-values
-    seen in the overlay words, which equals the effective row height.
+    Fallback: median inter-line gap × 45 % (original heuristic, used when
+    fewer than 3 barcodes are present, e.g. DEPT reports).
     """
     if len(words) < 10:
         return 8
+    # Primary: PLU barcodes give the exact row pitch.
+    barcodes = [w for w in words if re.match(r"^\d{8,15}$", w["text"])]
+    if len(barcodes) >= 3:
+        bc_tops = sorted(b["top"] for b in barcodes)
+        pitches = sorted(
+            bc_tops[i + 1] - bc_tops[i]
+            for i in range(len(bc_tops) - 1)
+            if bc_tops[i + 1] - bc_tops[i] > 0
+        )
+        if pitches:
+            pitch = pitches[len(pitches) // 2]  # median row pitch
+            return max(4, int(pitch * 0.7))
+    # Fallback: estimate from median gap between distinct y-values.
     tops = sorted({w["top"] for w in words})
     if len(tops) < 4:
         return 8
@@ -395,6 +408,59 @@ def _cluster_overlay_words(words: list, y_threshold: int = 8) -> list:
     for cluster in clusters:
         cluster["words"].sort(key=lambda item: item["left"])
         cluster["text"] = " ".join(_normalize_word_text(w["text"]) for w in cluster["words"] if _normalize_word_text(w["text"]))
+    return clusters
+
+
+def _cluster_plu_by_barcode_anchors(words: list) -> list:
+    """Build row clusters using PLU barcode y-positions as row anchors.
+
+    Each PLU barcode (8-15 digit string) marks the y-centre of one data row.
+    Every word is assigned to the nearest barcode within pitch/2 pixels.
+    Words farther than pitch/2 from every barcode (page headers, footers,
+    summary lines) are silently dropped.
+
+    This approach is immune to the y-jitter instability of threshold-based
+    clustering on high-resolution images where within-row y-spread can be
+    a large fraction of the inter-row pitch.
+
+    Returns [] when fewer than 2 barcodes are found.
+    """
+    barcodes = [w for w in words if re.match(r"^\d{8,15}$", w["text"])]
+    if len(barcodes) < 2:
+        return []
+    bc_tops = sorted(b["top"] for b in barcodes)
+    pitches = sorted(
+        bc_tops[i + 1] - bc_tops[i]
+        for i in range(len(bc_tops) - 1)
+        if bc_tops[i + 1] - bc_tops[i] > 0
+    )
+    if not pitches:
+        return []
+    pitch = pitches[len(pitches) // 2]   # median row pitch
+    tolerance = pitch * 0.5              # half-pitch window per side
+
+    row_words_map: dict = {y: [] for y in bc_tops}
+    for word in words:
+        if not word["text"].strip():
+            continue
+        wy = word["top"]
+        nearest_y = min(bc_tops, key=lambda by: abs(wy - by))
+        if abs(wy - nearest_y) <= tolerance:
+            row_words_map[nearest_y].append(word)
+
+    clusters = []
+    for y in bc_tops:
+        row_words = row_words_map[y]
+        if not row_words:
+            continue
+        row_words.sort(key=lambda w: w["left"])
+        text = " ".join(
+            _normalize_word_text(w["text"])
+            for w in row_words
+            if _normalize_word_text(w["text"])
+        )
+        if text:
+            clusters.append({"top": y, "words": row_words, "text": text})
     return clusters
 
 
@@ -559,15 +625,10 @@ def _fill_missing_dept_numbers(rows: list):
     return rows
 
 
-def _parse_dept_report_overlay_words(overlay_words: list, overlay_lines: list = None) -> tuple:
+def _parse_dept_report_overlay_words(overlay_words: list) -> tuple:
     rows = []
     parse_errors = []
-    # Use OCR-defined lines when available (reliable grouping already done by OCR engine).
-    # Fall back to y-threshold re-clustering only if overlay_lines is absent.
-    if overlay_lines:
-        clusters = overlay_lines
-    else:
-        clusters = _cluster_overlay_words(overlay_words)
+    clusters = _cluster_overlay_words(overlay_words)
     start_idx, positions = _find_report_header_positions(clusters)
 
     if start_idx is None or len(positions) < 4:
@@ -1040,25 +1101,24 @@ def _is_plu_data_row(cols: dict) -> bool:
     )
 
 
-def _parse_plu_report_overlay_words(overlay_words: list, overlay_lines: list = None) -> tuple:
+def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
     """Parse PLU Sales Report from OCR.space overlay words.
     Each data row maps to one output dict with keys:
       dept_num, description, items, sales_gross, refunds, discounts, net_sales, price.
     """
     rows = []
     parse_errors = []
-    # Use OCR-defined lines when available (reliable grouping already done by OCR engine).
-    # Fall back to y-threshold re-clustering only if overlay_lines is absent.
-    if overlay_lines:
-        clusters = overlay_lines
-    else:
-        y_thresh = _auto_y_threshold(overlay_words)
-        clusters = _cluster_overlay_words(overlay_words, y_threshold=y_thresh)
+    y_thresh = _auto_y_threshold(overlay_words)
+    clusters = _cluster_overlay_words(overlay_words, y_threshold=y_thresh)
     start_idx, positions = _find_plu_header_positions(clusters)
 
     if start_idx is None or len(positions) < 4:
+        # Headerless page: barcode-anchor clustering gives precise row grouping
+        # on high-resolution images where y-threshold jitter would split rows.
+        anchor_clusters = _cluster_plu_by_barcode_anchors(overlay_words)
+        parse_clusters = anchor_clusters if anchor_clusters else clusters
         # Headerless continuation page: try format-based parsing without column positions.
-        for _cluster in clusters:
+        for _cluster in parse_clusters:
             _text_up = _cluster["text"].upper()
             if re.search(r"^TOTAL\s+PLU|GRAND\s+TOTAL|TAX\s+COLLECTION", _text_up):
                 break
@@ -1278,12 +1338,11 @@ def parse_department_report_image(image_path: str) -> dict:
         overlay_data = _ocr_with_ocrspace_overlay(image_path, api_key)
         raw_text = overlay_data["raw_text"]
         is_plu_flag = _is_plu_sales_report(raw_text)
-        _ov_lines = overlay_data.get("overlay_lines") or []
         if is_plu_flag:
             report_type = "plu"
-            rows, parse_errors = _parse_plu_report_overlay_words(overlay_data["overlay_words"], _ov_lines)
+            rows, parse_errors = _parse_plu_report_overlay_words(overlay_data["overlay_words"])
         else:
-            rows, parse_errors = _parse_dept_report_overlay_words(overlay_data["overlay_words"], _ov_lines)
+            rows, parse_errors = _parse_dept_report_overlay_words(overlay_data["overlay_words"])
 
     if not rows:
         raw_text = raw_text or _ocr_text(image_path)
