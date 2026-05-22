@@ -835,9 +835,48 @@ _PLU_COL_ORDER = ["plu", "pkg", "desc", "dept", "count", "price", "sales", "pct_
 
 # Regexes for format-based (headerless) row parsing
 _PLU_CODE_RE  = re.compile(r"^\d{6,15}$")
-_MONEY_VAL_RE = re.compile(r"^\$?\d{1,6}(?:[.,]\d{1,2})?$")
+_MONEY_VAL_RE = re.compile(r"^\$?[\d,]{1,10}(?:\.\d{1,2})?$")
 _PCT_VAL_RE   = re.compile(r"^\d{1,3}(?:[.,]\d{1,2})?%?$")
 _INT_VAL_RE   = re.compile(r"^\d{1,4}$")
+
+
+def _split_desc_dept_by_xgap(mid: list) -> "tuple[str, str]":
+    """Split a list of (word_obj, text) middle tokens into (description, department).
+
+    In a PLU Sales Report the Description column appears to the left of the
+    Department column.  On the printed page the inter-column gap is always
+    wider than the within-field word spacing.  We find that boundary as the
+    largest x-position gap between consecutive tokens.
+
+    Falls back to 'last token = department, rest = description' when no gap
+    is clearly dominant (e.g. only two tokens, or all gaps are similar).
+    """
+    if not mid:
+        return "", ""
+    if len(mid) == 1:
+        return mid[0][1], ""
+
+    lefts = [tok[0]["left"] for tok in mid]
+    gaps  = [lefts[i + 1] - lefts[i] for i in range(len(lefts) - 1)]
+
+    max_gap = max(gaps)
+    max_idx = gaps.index(max_gap)
+
+    # Average of all OTHER gaps (within-field word spacing)
+    other = [g for j, g in enumerate(gaps) if j != max_idx and g >= 0]
+    avg   = sum(other) / len(other) if other else 0
+
+    # A gap is a column boundary when it is clearly wider than inter-word
+    # spacing.  Threshold: 1.6× avg AND at least 2 px larger.  When there
+    # is only one gap (2 tokens) we always use it as the boundary.
+    if len(gaps) == 1 or max_gap >= max(avg * 1.6, avg + 2):
+        desc = " ".join(tok[1] for tok in mid[:max_idx + 1])
+        dept = " ".join(tok[1] for tok in mid[max_idx + 1:])
+    else:
+        desc = " ".join(tok[1] for tok in mid[:-1])
+        dept = mid[-1][1]
+
+    return desc, dept
 
 
 def _parse_plu_row_by_format(cluster: dict) -> "dict | None":
@@ -853,63 +892,61 @@ def _parse_plu_row_by_format(cluster: dict) -> "dict | None":
     words = [w for w in cluster["words"] if _normalize_word_text(w["text"])]
     if len(words) < 3:  # minimum: at least description + price + sales
         return None
-    raw_texts = [_normalize_word_text(w["text"]) for w in words]
+
+    # Build (word_obj, normalized_text) pairs so x-positions survive preprocessing.
+    raw = [(w, _normalize_word_text(w["text"])) for w in words]
 
     # ── Preprocess: merge split OCR tokens ──────────────────────────────────
     # OCR often outputs "$ 4.89" as two words ('$','4.89') and
     # "5.25 %" as two words ('5.25','%').  Merge them before parsing.
-    texts: list = []
+    # For merged tokens we keep the x-position of the NUMBER word so that
+    # the position is meaningful for the middle-section x-gap analysis.
+    tokens: list = []   # list of (word_obj, text)
     idx = 0
-    while idx < len(raw_texts):
-        t = raw_texts[idx]
-        if t == "$" and idx + 1 < len(raw_texts) and re.match(r"^\d", raw_texts[idx + 1]):
-            texts.append("$" + raw_texts[idx + 1])
+    while idx < len(raw):
+        w, t = raw[idx]
+        if t == "$" and idx + 1 < len(raw) and re.match(r"^\d", raw[idx + 1][1]):
+            tokens.append((raw[idx + 1][0], "$" + raw[idx + 1][1]))  # number's x
             idx += 2
-        elif t not in ("$", "%") and idx + 1 < len(raw_texts) and raw_texts[idx + 1] == "%":
-            texts.append(t + "%")
+        elif t not in ("$", "%") and idx + 1 < len(raw) and raw[idx + 1][1] == "%":
+            tokens.append((w, t + "%"))   # current word's x
             idx += 2
         else:
-            texts.append(t)
+            tokens.append((w, t))
             idx += 1
     # ────────────────────────────────────────────────────────────────────────
 
     # Optionally skip leading PLU code (4+ digits) and pkg qty (1-2 digits).
     start = 0
-    if re.match(r"^\d{4,}$", texts[start]):   # PLU code: 4+ digit string
+    if re.match(r"^\d{4,}$", tokens[start][1]):
         start += 1
-        if start < len(texts) and re.match(r"^\d{1,2}$", texts[start]):
+        if start < len(tokens) and re.match(r"^\d{1,2}$", tokens[start][1]):
             start += 1  # pkg qty
 
-    if len(texts) - start < 3:
-        return None  # too few words after skipping leading codes
+    if len(tokens) - start < 3:
+        return None  # too few tokens after skipping leading codes
 
-    right = len(texts) - 1
+    right = len(tokens) - 1
     pct_total = pct_dept = sales_str = price_str = count_str = ""
 
     # Parse right-to-left: %total, %dept, sales, price, count
-    if right >= start and _PCT_VAL_RE.match(texts[right]):
-        pct_total = texts[right]; right -= 1
-    if right >= start and _PCT_VAL_RE.match(texts[right]):
-        pct_dept = texts[right]; right -= 1
-    if right >= start and _MONEY_VAL_RE.match(texts[right]):
-        sales_str = texts[right]; right -= 1
-    if right >= start and _MONEY_VAL_RE.match(texts[right]):
-        price_str = texts[right]; right -= 1
-    if right >= start and _INT_VAL_RE.match(texts[right]):
-        count_str = texts[right]; right -= 1
+    if right >= start and _PCT_VAL_RE.match(tokens[right][1]):
+        pct_total = tokens[right][1]; right -= 1
+    if right >= start and _PCT_VAL_RE.match(tokens[right][1]):
+        pct_dept = tokens[right][1]; right -= 1
+    if right >= start and _MONEY_VAL_RE.match(tokens[right][1]):
+        sales_str = tokens[right][1]; right -= 1
+    if right >= start and _MONEY_VAL_RE.match(tokens[right][1]):
+        price_str = tokens[right][1]; right -= 1
+    if right >= start and _INT_VAL_RE.match(tokens[right][1]):
+        count_str = tokens[right][1]; right -= 1
 
     if not price_str and not sales_str:
         return None  # No numeric columns found — not a data row
 
-    # Middle words (start..right inclusive): Description + Department
-    middle = texts[start: right + 1]
-    if not middle:
-        desc, dept = "", ""
-    elif len(middle) == 1:
-        desc, dept = middle[0], ""  # single word treated as description
-    else:
-        dept = middle[-1]           # last word = Department
-        desc = " ".join(middle[:-1])  # rest = Description
+    # Middle tokens (start..right inclusive): Description + Department
+    mid = tokens[start: right + 1]
+    desc, dept = _split_desc_dept_by_xgap(mid)
 
     # Strip stray PLU/pkg numbers that may have bled into description
     desc = re.sub(r"^\d{4,}\s*", "", desc).strip()
