@@ -1328,7 +1328,7 @@ def _match_product_for_scan(description: str, products: list):
     return None
 
 
-def apply_department_scan_report(rows: list, report_date, user_id) -> dict:
+def apply_department_scan_report(rows: list, report_date, user_id, report_type: str = "dept") -> dict:
     """
     Save confirmed department-sale rows (from DEPARTMENT REPORT OCR scan) to the DB.
     Creates a DepartmentSaleReport header + one DepartmentSaleRow per item.
@@ -1343,6 +1343,7 @@ def apply_department_scan_report(rows: list, report_date, user_id) -> dict:
         report = DepartmentSaleReport(
             user_id=user_id,
             report_date=report_date if report_date else _date.today(),
+            report_type=report_type or "dept",
         )
         session.add(report)
         session.flush()  # get report.id before adding rows

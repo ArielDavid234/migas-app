@@ -403,6 +403,7 @@ class DepartmentSaleReport(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     report_date = Column(Date, nullable=False, default=date.today, index=True)
     created_at = Column(DateTime, default=datetime.now)
+    report_type = Column(String(10), default="dept")
 
     user = relationship("User")
     rows = relationship("DepartmentSaleRow", back_populates="dept_report",

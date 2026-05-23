@@ -38,6 +38,7 @@ def _migrate():
         ("products", "approved_at",     "DATETIME"),
         # Loyalty tables columns (tables created by create_all, extra columns guarded here)
         ("loyalty_customers", "purchases_since_last_reward", "INTEGER NOT NULL DEFAULT 0"),
+        ("department_sale_reports", "report_type", "VARCHAR(10) DEFAULT 'dept'"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:

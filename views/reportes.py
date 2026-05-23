@@ -97,6 +97,7 @@ def reportes_view(page: ft.Page, user):
                     "report": r,
                     "user_name": r.user.name if r.user else "—",
                     "rows": rows,
+                    "report_type": r.report_type or "dept",
                 })
             return result
         finally:
@@ -235,10 +236,11 @@ def reportes_view(page: ft.Page, user):
             _do,
         )
 
-    def _build_department_sales_table(rows):
+    def _build_department_sales_table(rows, report_type="dept"):
         if not rows:
             return ft.Text("Sin filas de departamentos", size=SMALL_SIZE, color=TEXT_SECONDARY, italic=True)
 
+        is_plu = report_type == "plu"
         table_rows = []
         total_items = 0
         total_gross = 0.0
@@ -259,36 +261,59 @@ def reportes_view(page: ft.Page, user):
             total_discounts += discounts
             total_net += net
 
+            if is_plu:
+                col5 = ft.DataCell(ft.Text(f"${refunds:,.2f}", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT, color=SUCCESS))
+                col6 = ft.DataCell(ft.Text(f"{discounts:.2f}%", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT))
+                col7 = ft.DataCell(ft.Text(f"{net:.2f}%", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT))
+            else:
+                col5 = ft.DataCell(ft.Text(f"${refunds:,.2f}", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT))
+                col6 = ft.DataCell(ft.Text(f"${discounts:,.2f}", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT))
+                col7 = ft.DataCell(ft.Text(f"${net:,.2f}", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT, color=SUCCESS))
+
             table_rows.append(ft.DataRow(cells=[
                 ft.DataCell(ft.Text(str(row.dept_num or "—"), size=SMALL_SIZE)),
                 ft.DataCell(ft.Text(row.description or "—", size=SMALL_SIZE)),
                 ft.DataCell(ft.Text(str(items), size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT)),
                 ft.DataCell(ft.Text(f"${gross:,.2f}", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT)),
-                ft.DataCell(ft.Text(f"${refunds:,.2f}", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT)),
-                ft.DataCell(ft.Text(f"${discounts:,.2f}", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT)),
-                ft.DataCell(ft.Text(f"${net:,.2f}", size=SMALL_SIZE, text_align=ft.TextAlign.RIGHT, color=SUCCESS)),
+                col5, col6, col7,
             ]))
 
-        table_rows.append(ft.DataRow(cells=[
-            ft.DataCell(ft.Text("TOTAL", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
-            ft.DataCell(ft.Text("", size=SMALL_SIZE)),
-            ft.DataCell(ft.Text(str(total_items), size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
-            ft.DataCell(ft.Text(f"${total_gross:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
-            ft.DataCell(ft.Text(f"${total_refunds:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
-            ft.DataCell(ft.Text(f"${total_discounts:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
-            ft.DataCell(ft.Text(f"${total_net:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT, color=SUCCESS)),
-        ]))
+        if is_plu:
+            table_rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text("TOTAL", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
+                ft.DataCell(ft.Text("", size=SMALL_SIZE)),
+                ft.DataCell(ft.Text(str(total_items), size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
+                ft.DataCell(ft.Text("", size=SMALL_SIZE)),
+                ft.DataCell(ft.Text(f"${total_refunds:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT, color=SUCCESS)),
+                ft.DataCell(ft.Text("", size=SMALL_SIZE)),
+                ft.DataCell(ft.Text("", size=SMALL_SIZE)),
+            ]))
+        else:
+            table_rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text("TOTAL", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
+                ft.DataCell(ft.Text("", size=SMALL_SIZE)),
+                ft.DataCell(ft.Text(str(total_items), size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
+                ft.DataCell(ft.Text(f"${total_gross:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
+                ft.DataCell(ft.Text(f"${total_refunds:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
+                ft.DataCell(ft.Text(f"${total_discounts:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT)),
+                ft.DataCell(ft.Text(f"${total_net:,.2f}", size=SMALL_SIZE, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT, color=SUCCESS)),
+            ]))
+
+        if is_plu:
+            col_names = ["Dept", "Description", "Count", "Price", "Sales", "% of Dept", "% of Total"]
+        else:
+            col_names = ["Dept", "Descripción", "Items", "Bruto", "Devoluciones", "Descuentos", "Neto"]
+
+        summary_text = (
+            f"Total Sales: ${total_refunds:,.2f}" if is_plu
+            else f"Neto total del reporte escaneado: ${total_net:,.2f}"
+        )
 
         return ft.Column([
             scrollable_row([ft.DataTable(
                 columns=[
-                    ft.DataColumn(ft.Text("Dept", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Descripción", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Items", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Bruto", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Devoluciones", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Descuentos", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Neto", size=SMALL_SIZE, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text(n, size=SMALL_SIZE, weight=ft.FontWeight.BOLD))
+                    for n in col_names
                 ],
                 rows=table_rows,
                 border=ft.border.all(1, DIVIDER_COLOR), border_radius=6,
@@ -297,7 +322,7 @@ def reportes_view(page: ft.Page, user):
             )]),
             ft.Container(
                 content=ft.Text(
-                    f"Neto total del reporte escaneado: ${total_net:,.2f}",
+                    summary_text,
                     size=BODY_SIZE,
                     weight=ft.FontWeight.BOLD,
                     color=PRIMARY_DARK,
@@ -392,7 +417,7 @@ def reportes_view(page: ft.Page, user):
                 header_row,
                 ft.Divider(height=1, color=DIVIDER_COLOR),
                 _section("Ventas por Departamento", ft.Icons.RECEIPT_LONG, [
-                    _build_department_sales_table(rd["rows"])
+                    _build_department_sales_table(rd["rows"], rd.get("report_type", "dept"))
                 ]),
             ], spacing=12),
             padding=16, border_radius=12, bgcolor=ft.Colors.with_opacity(0.03, ACCENT),
@@ -773,6 +798,7 @@ def reportes_view(page: ft.Page, user):
             result = apply_department_scan_report(
                 confirmed, selected_date,
                 user.id if hasattr(user, "id") else None,
+                report_type=data.get("report_type", "dept"),
             )
             log_action(
                 user.id if hasattr(user, "id") else None,
