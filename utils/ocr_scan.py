@@ -1270,6 +1270,20 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
             _row = _parse_plu_row_by_format(_cluster, boundary_x=boundary_x)
             if _row:
                 rows.append(_row)
+        # Drop zero-data phantom rows: when a description has BOTH a zero-data
+        # row (count=0, price=0, sales=0) AND a real-data row, keep only the
+        # real one.  This prevents a barcode cluster that OCR mis-read from
+        # inserting a blank row that visually shifts all subsequent rows down.
+        if rows:
+            descs_with_data = {
+                r["description"] for r in rows
+                if r["items"] or r["sales_gross"] or r["refunds"]
+            }
+            rows = [
+                r for r in rows
+                if r["items"] or r["sales_gross"] or r["refunds"]
+                or r["description"] not in descs_with_data
+            ]
         if rows:
             return rows, []
         diag = f"clusters={len(clusters)}, start_idx={start_idx}, positions={positions}"
