@@ -1069,6 +1069,24 @@ def _parse_plu_row_by_format(cluster: dict, boundary_x: float = None) -> "dict |
             idx += 1
     # ────────────────────────────────────────────────────────────────────────
 
+    # ── X-position deduplication ────────────────────────────────────────────
+    # Adjacent-row bleed: OCR sometimes assigns a numeric token from a nearby
+    # row to this cluster because it is within the y-tolerance window.  When
+    # two tokens land at nearly the same x-column (same POS printer column),
+    # keep only the one whose y is closest to the barcode anchor y.  This
+    # removes duplicate PCT or MONEY values without discarding valid tokens.
+    ref_y = cluster.get("top", 0)
+    if ref_y:
+        buckets: dict = {}
+        for tok in tokens:
+            bk = round(tok[0]["left"] / 14) * 14   # group x within ±7 px
+            if bk not in buckets:
+                buckets[bk] = tok
+            elif abs(tok[0]["top"] - ref_y) < abs(buckets[bk][0]["top"] - ref_y):
+                buckets[bk] = tok   # prefer y-closer token
+        tokens = sorted(buckets.values(), key=lambda t: t[0]["left"])
+    # ────────────────────────────────────────────────────────────────────────
+
     # Optionally skip leading PLU code (4+ digits) and pkg qty (1-2 digits).
     start = 0
     if re.match(r"^\d{4,}$", tokens[start][1]):
@@ -1076,17 +1094,34 @@ def _parse_plu_row_by_format(cluster: dict, boundary_x: float = None) -> "dict |
         if start < len(tokens) and re.match(r"^\d{1,2}$", tokens[start][1]):
             start += 1  # pkg qty
 
-    if len(tokens) - start < 3:
+    if len(tokens) - start < 2:
         return None  # too few tokens after skipping leading codes
 
-    right = len(tokens) - 1
+    # ── PCT column parsing (x-position aware) ───────────────────────────────
+    # With adjacent-row bleed, there may be 1-3 PCT tokens at different x
+    # positions.  The LEFTMOST PCT is always pct_dept (printed first) and the
+    # RIGHTMOST is pct_total.  Anything in between is discarded.  We then set
+    # 'right' to the token just before the leftmost PCT so MONEY parsing below
+    # sees only the price/sales columns.
     pct_total = pct_dept = sales_str = price_str = count_str = ""
+    # Only tokens that actually carry "%" qualify as percentage values.
+    # _PCT_VAL_RE has %? (optional) so bare integers like "2" or "9" would
+    # incorrectly match without this extra guard.
+    pct_indices = [i for i, tok in enumerate(tokens)
+                   if tok[1].endswith("%") and _PCT_VAL_RE.match(tok[1])]
+    if len(pct_indices) >= 2:
+        pct_by_x = sorted(pct_indices, key=lambda i: tokens[i][0]["left"])
+        pct_dept  = tokens[pct_by_x[0]][1]   # leftmost = % of Dept
+        pct_total = tokens[pct_by_x[-1]][1]  # rightmost = % of Total
+        right = min(pct_indices) - 1
+    elif len(pct_indices) == 1:
+        pct_total = tokens[pct_indices[0]][1]
+        right = pct_indices[0] - 1
+    else:
+        right = len(tokens) - 1
+    # ────────────────────────────────────────────────────────────────────────
 
-    # Parse right-to-left: %total, %dept, sales, price, count
-    if right >= start and _PCT_VAL_RE.match(tokens[right][1]):
-        pct_total = tokens[right][1]; right -= 1
-    if right >= start and _PCT_VAL_RE.match(tokens[right][1]):
-        pct_dept = tokens[right][1]; right -= 1
+    # Parse right-to-left: sales, price, count (from below the PCT region)
     if right >= start and _MONEY_VAL_RE.match(tokens[right][1]):
         sales_str = tokens[right][1]; right -= 1
     if right >= start and _MONEY_VAL_RE.match(tokens[right][1]):
@@ -1094,21 +1129,28 @@ def _parse_plu_row_by_format(cluster: dict, boundary_x: float = None) -> "dict |
     if right >= start and _INT_VAL_RE.match(tokens[right][1]):
         count_str = tokens[right][1]; right -= 1
 
-    if not price_str and not sales_str:
-        return None  # No numeric columns found — not a data row
-
-    # Middle tokens (start..right inclusive): Description + Department
+    # Compute middle section (description + department) regardless of whether
+    # numeric data was found — some rows have OCR-missed numbers but the
+    # product name and dept are still valid and must appear in the report.
     mid = tokens[start: right + 1]
     desc, dept = _split_desc_dept_by_xgap(mid, boundary_x=boundary_x)
-
-    # Strip stray PLU/pkg numbers that may have bled into description
     desc = re.sub(r"^\d{4,}\s*", "", desc).strip()
     desc = re.sub(r"^\d{1,2}\s+", "", desc).strip()
-
-    # Reject rows where description/dept contain no letters
-    # (e.g. clusters that are just a list of monetary values)
     if not re.search(r"[A-Za-z]", desc + dept):
-        return None
+        return None  # no letters at all → not a real data row
+
+    if not price_str and not sales_str:
+        # No numeric columns detected (OCR missed the entire number block).
+        # Still emit the row so it appears in the report, just with zero counts.
+        return {
+            "dept_num":    dept,
+            "description": desc,
+            "items":       0,
+            "sales_gross": 0.0,
+            "refunds":     0.0,
+            "discounts":   _parse_decimal(pct_dept.replace("%", "").strip()) or 0.0,
+            "net_sales":   _parse_decimal(pct_total.replace("%", "").strip()) or 0.0,
+        }
 
     count = _parse_items_text(count_str) or 0
     price = _parse_money_text(price_str) or 0.0
@@ -1135,6 +1177,14 @@ def _parse_plu_row_by_format(cluster: dict, boundary_x: float = None) -> "dict |
         count = max(1, round(sales / price))
     if not price and count and sales:
         price = round(sales / count, 2)
+    # Single money value: OCR found only one $ amount — treat it as both
+    # price and sales with count=1 (most common case for 1-unit transactions).
+    if sales > 0 and price == 0 and count == 0:
+        count = 1
+        price = sales
+    elif price > 0 and sales == 0 and count == 0:
+        count = 1
+        sales = price
     pct_d = _parse_decimal(pct_dept.replace("%", "").strip()) or 0.0
     pct_t = _parse_decimal(pct_total.replace("%", "").strip()) or 0.0
 
