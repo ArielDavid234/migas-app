@@ -922,21 +922,26 @@ _PCT_VAL_RE   = re.compile(r"^\d{1,3}(?:[.,]\d{1,2})?%?$")
 _INT_VAL_RE   = re.compile(r"^\d{1,4}$")
 
 
-def _split_desc_dept_by_xgap(mid: list) -> "tuple[str, str]":
+def _split_desc_dept_by_xgap(mid: list, boundary_x: float = None) -> "tuple[str, str]":
     """Split a list of (word_obj, text) middle tokens into (description, department).
 
-    In a PLU Sales Report the Description column appears to the left of the
-    Department column.  On the printed page the inter-column gap is always
-    wider than the within-field word spacing.  We find that boundary as the
-    largest x-position gap between consecutive tokens.
+    When boundary_x is provided (consensus column boundary from the full page),
+    tokens with x < boundary_x go to description and x >= boundary_x go to
+    department.  Both groups are sorted by (y, x) for correct reading order.
 
-    Falls back to 'last token = department, rest = description' when no gap
-    is clearly dominant (e.g. only two tokens, or all gaps are similar).
+    Fallback (no boundary_x): largest x-gap heuristic.
     """
     if not mid:
         return "", ""
     if len(mid) == 1:
         return mid[0][1], ""
+
+    if boundary_x is not None:
+        desc_tok = sorted([t for t in mid if t[0]["left"] < boundary_x],
+                          key=lambda t: (t[0]["top"], t[0]["left"]))
+        dept_tok = sorted([t for t in mid if t[0]["left"] >= boundary_x],
+                          key=lambda t: (t[0]["top"], t[0]["left"]))
+        return " ".join(t[1] for t in desc_tok), " ".join(t[1] for t in dept_tok)
 
     lefts = [tok[0]["left"] for tok in mid]
     gaps  = [lefts[i + 1] - lefts[i] for i in range(len(lefts) - 1)]
@@ -952,16 +957,82 @@ def _split_desc_dept_by_xgap(mid: list) -> "tuple[str, str]":
     # spacing.  Threshold: 1.6× avg AND at least 2 px larger.  When there
     # is only one gap (2 tokens) we always use it as the boundary.
     if len(gaps) == 1 or max_gap >= max(avg * 1.6, avg + 2):
-        desc = " ".join(tok[1] for tok in mid[:max_idx + 1])
-        dept = " ".join(tok[1] for tok in mid[max_idx + 1:])
+        split_idx = max_idx + 1
     else:
-        desc = " ".join(tok[1] for tok in mid[:-1])
-        dept = mid[-1][1]
+        split_idx = len(mid) - 1
 
-    return desc, dept
+    # Sort each segment by (y, x) for correct multi-line reading order.
+    desc_tok = sorted(mid[:split_idx], key=lambda t: (t[0]["top"], t[0]["left"]))
+    dept_tok = sorted(mid[split_idx:], key=lambda t: (t[0]["top"], t[0]["left"]))
+    return " ".join(t[1] for t in desc_tok), " ".join(t[1] for t in dept_tok)
 
 
-def _parse_plu_row_by_format(cluster: dict) -> "dict | None":
+def _compute_desc_dept_boundary(clusters: list) -> "float | None":
+    """Determine the x-position boundary between the Description and Department
+    columns by examining all barcode-anchor clusters together.
+
+    For each cluster, strip the leading PLU/pkg tokens and trailing numeric
+    tokens to obtain the 'middle' text tokens, then find the dominant gap.
+    Collect the x-position of the first Department token (token just right
+    of the dominant gap) for clusters where the gap is unambiguously large.
+    Returns the median of those positions, or None if too few clusters pass.
+    """
+    dept_starts = []
+    for cluster in clusters:
+        words = [w for w in cluster["words"] if _normalize_word_text(w["text"])]
+        if len(words) < 4:
+            continue
+        raw = [(w, _normalize_word_text(w["text"])) for w in words]
+        # Merge split $ and % tokens (same logic as in _parse_plu_row_by_format)
+        tokens: list = []
+        idx = 0
+        while idx < len(raw):
+            w, t = raw[idx]
+            if t == "$" and idx + 1 < len(raw) and re.match(r"^\d", raw[idx + 1][1]):
+                tokens.append((raw[idx + 1][0], "$" + raw[idx + 1][1]))
+                idx += 2
+            elif t not in ("$", "%") and idx + 1 < len(raw) and raw[idx + 1][1] == "%":
+                tokens.append((w, t + "%"))
+                idx += 2
+            else:
+                tokens.append((w, t))
+                idx += 1
+        # Skip PLU barcode and pkg qty
+        start = 0
+        if start < len(tokens) and re.match(r"^\d{4,}$", tokens[start][1]):
+            start += 1
+        if start < len(tokens) and re.match(r"^\d{1,2}$", tokens[start][1]):
+            start += 1
+        # Strip numeric columns from the right
+        right = len(tokens) - 1
+        for pat in [_PCT_VAL_RE, _PCT_VAL_RE, _MONEY_VAL_RE, _MONEY_VAL_RE]:
+            if right >= start and pat.match(tokens[right][1]):
+                right -= 1
+        if right >= start and _INT_VAL_RE.match(tokens[right][1]):
+            right -= 1
+        mid = tokens[start: right + 1]
+        if len(mid) < 2:
+            continue
+        mid_x = sorted(mid, key=lambda t: t[0]["left"])
+        lefts = [t[0]["left"] for t in mid_x]
+        gaps = [lefts[i + 1] - lefts[i] for i in range(len(lefts) - 1)]
+        if not gaps:
+            continue
+        max_gap = max(gaps)
+        max_idx = gaps.index(max_gap)
+        other_gaps = [g for j, g in enumerate(gaps) if j != max_idx]
+        avg_other = sum(other_gaps) / len(other_gaps) if other_gaps else 0
+        # Strict threshold: column gap must be ≥ 2× avg inter-word gap AND
+        # ≥ 100 px larger than the avg, to avoid false positives.
+        if len(gaps) == 1 or max_gap >= max(avg_other * 2.0, avg_other + 100):
+            dept_starts.append(float(lefts[max_idx + 1]))
+    if len(dept_starts) < 2:
+        return None
+    dept_starts.sort()
+    return dept_starts[len(dept_starts) // 2]  # median
+
+
+def _parse_plu_row_by_format(cluster: dict, boundary_x: float = None) -> "dict | None":
     """Parse one PLU data row by value format (right-to-left).
 
     Works without column header positions — suitable for headerless continuation
@@ -1028,7 +1099,7 @@ def _parse_plu_row_by_format(cluster: dict) -> "dict | None":
 
     # Middle tokens (start..right inclusive): Description + Department
     mid = tokens[start: right + 1]
-    desc, dept = _split_desc_dept_by_xgap(mid)
+    desc, dept = _split_desc_dept_by_xgap(mid, boundary_x=boundary_x)
 
     # Strip stray PLU/pkg numbers that may have bled into description
     desc = re.sub(r"^\d{4,}\s*", "", desc).strip()
@@ -1042,10 +1113,28 @@ def _parse_plu_row_by_format(cluster: dict) -> "dict | None":
     count = _parse_items_text(count_str) or 0
     price = _parse_money_text(price_str) or 0.0
     sales = _parse_money_text(sales_str) or 0.0
+
+    # Resolve bare-integer ambiguity: a token like "8" with no decimal point
+    # is taken as price by the right-to-left scanner, but may actually be the
+    # Count column value when OCR missed the real price token.
+    # Test: if treating it as price leads to count × price ≠ sales, swap it.
+    if price > 0 and count == 0 and sales > 0 and "." not in (price_str or "").replace("$", ""):
+        derived_count_a = round(sales / price)
+        if derived_count_a > 0 and abs(derived_count_a * price - sales) > 0.02:
+            candidate_count = int(price)
+            if candidate_count > 0:
+                derived_price = sales / candidate_count
+                # Accept only if derived price has at most 2 decimal places
+                if abs(derived_price - round(derived_price, 2)) < 0.001:
+                    count = candidate_count
+                    price = round(derived_price, 2)
+
     if not sales and price and count:
         sales = round(price * count, 2)
     if not count and price and sales:
         count = max(1, round(sales / price))
+    if not price and count and sales:
+        price = round(sales / count, 2)
     pct_d = _parse_decimal(pct_dept.replace("%", "").strip()) or 0.0
     pct_t = _parse_decimal(pct_total.replace("%", "").strip()) or 0.0
 
@@ -1117,6 +1206,9 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
         # on high-resolution images where y-threshold jitter would split rows.
         anchor_clusters = _cluster_plu_by_barcode_anchors(overlay_words)
         parse_clusters = anchor_clusters if anchor_clusters else clusters
+        # Compute consensus desc/dept column boundary from the full set of clusters
+        # so individual-row gap heuristics are replaced by a page-wide x split.
+        boundary_x = _compute_desc_dept_boundary(parse_clusters) if anchor_clusters else None
         # Headerless continuation page: try format-based parsing without column positions.
         for _cluster in parse_clusters:
             _text_up = _cluster["text"].upper()
@@ -1125,7 +1217,7 @@ def _parse_plu_report_overlay_words(overlay_words: list) -> tuple:
             # Only skip clusters where these words appear at the START (anchored)
             if re.search(r"^PAGE\s+\d|^PLU\s+NO|^DESCRIPTION\b|^DEPARTMENT\b|COUNT\s+PRICE", _text_up):
                 continue
-            _row = _parse_plu_row_by_format(_cluster)
+            _row = _parse_plu_row_by_format(_cluster, boundary_x=boundary_x)
             if _row:
                 rows.append(_row)
         if rows:

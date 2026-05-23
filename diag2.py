@@ -3,7 +3,9 @@ sys.path.insert(0, r"C:\Users\Ariel David\Desktop\MigasApp")
 from utils.ocr_scan import (
     _ocrspace_request, _cluster_overlay_words, _auto_y_threshold,
     _cluster_plu_by_barcode_anchors, _parse_plu_row_by_format,
+    _compute_desc_dept_boundary,
     _find_plu_header_positions, _cluster_plu_row_columns, _is_plu_data_row,
+    _normalize_word_text,
 )
 
 def test_photo(path, label):
@@ -40,19 +42,25 @@ def test_photo(path, label):
     else:
         # Barcode-anchor path
         anchor_clusters = _cluster_plu_by_barcode_anchors(all_words)
-        print(f"\n[BARCODE-ANCHOR CLUSTERS]: {len(anchor_clusters)} clusters")
+        boundary_x = _compute_desc_dept_boundary(anchor_clusters)
+        print(f"\n[BARCODE-ANCHOR CLUSTERS]: {len(anchor_clusters)} clusters  boundary_x={boundary_x}")
         rows_found = 0
-        for i, cluster in enumerate(anchor_clusters[:20]):
-            row = _parse_plu_row_by_format(cluster)
+        for i, cluster in enumerate(anchor_clusters[:6]):
+            # Show raw x-sorted tokens for diagnosis
+            words = [w for w in cluster["words"] if _normalize_word_text(w["text"])]
+            sorted_w = sorted(words, key=lambda w: w["left"])
+            print(f"\n  --- Cluster {i} raw tokens (x-sorted) ---")
+            for w in sorted_w:
+                print(f"    x={w['left']:5d} y={w['top']:5d}  {w['text']!r}")
+            row = _parse_plu_row_by_format(cluster, boundary_x=boundary_x)
             if row:
-                print(f"  Row {i}: desc={row['description']!r}  dept={row['dept_num']!r}  "
+                print(f"  => desc={row['description']!r}  dept={row['dept_num']!r}  "
                       f"count={row['items']}  price={row['sales_gross']}  "
                       f"sales={row['refunds']}  pct_d={row['discounts']}  pct_t={row['net_sales']}")
                 rows_found += 1
             else:
-                print(f"  Skip {i}: {cluster['text'][:60]!r}")
-        print(f"  ... (rows found in first 20: {rows_found})")
+                print(f"  => SKIP: {cluster['text'][:60]!r}")
+        print(f"\n  ... (showing detail for first 6 clusters)")
 
-test_photo(r"C:\Users\Ariel David\Desktop\MigasApp\2.jpeg", "2.jpeg")
 test_photo(r"C:\Users\Ariel David\Desktop\MigasApp\3.jpeg", "3.jpeg")
 test_photo(r"C:\Users\Ariel David\Desktop\MigasApp\4.jpeg", "4.jpeg")
