@@ -437,16 +437,30 @@ def _cluster_plu_by_barcode_anchors(words: list) -> list:
     if not pitches:
         return []
     pitch = pitches[len(pitches) // 2]   # median row pitch
-    tolerance = pitch * 0.5              # half-pitch window per side
+    # Upward tolerance: tokens printed above their barcode line (OCR jitter).
+    # Downward tolerance: full pitch — numeric data lines are printed BELOW
+    # the description line and can sit close to the NEXT barcode anchor.
+    # Using the nearest-barcode-ABOVE rule (largest bc_y ≤ token_y) prevents
+    # price/count tokens from bleeding into the following product's cluster.
+    tolerance_up = pitch * 0.4
 
     row_words_map: dict = {y: [] for y in bc_tops}
     for word in words:
         if not word["text"].strip():
             continue
         wy = word["top"]
-        nearest_y = min(bc_tops, key=lambda by: abs(wy - by))
-        if abs(wy - nearest_y) <= tolerance:
-            row_words_map[nearest_y].append(word)
+        # Prefer the nearest barcode that is AT OR ABOVE the token
+        # (i.e., bc_y ≤ wy) within one full pitch below.
+        above = [by for by in bc_tops if by <= wy and wy - by <= pitch]
+        if above:
+            nearest_y = max(above)   # largest bc_y ≤ wy → closest above
+        else:
+            # Token is above the first barcode — use nearest overall within
+            # the upward tolerance (handles text printed slightly above barcode).
+            nearest_y = min(bc_tops, key=lambda by: abs(wy - by))
+            if abs(wy - nearest_y) > tolerance_up:
+                continue   # too far — header/footer, drop
+        row_words_map[nearest_y].append(word)
 
     clusters = []
     for y in bc_tops:
@@ -937,10 +951,23 @@ def _split_desc_dept_by_xgap(mid: list, boundary_x: float = None) -> "tuple[str,
         return mid[0][1], ""
 
     if boundary_x is not None:
-        desc_tok = sorted([t for t in mid if t[0]["left"] < boundary_x],
+        # Apply a small left buffer to absorb OCR pixel-level variation
+        # so that department tokens landing a few pixels below the computed
+        # boundary are still placed in the department column.
+        eff_boundary = boundary_x - 30   # 30 px absorbs OCR jitter + dept-col spread   # 30 px buffer: boundary is 10th-pct
+        desc_tok = sorted([t for t in mid if t[0]["left"] < eff_boundary],
                           key=lambda t: (t[0]["top"], t[0]["left"]))
-        dept_tok = sorted([t for t in mid if t[0]["left"] >= boundary_x],
+        dept_tok = sorted([t for t in mid if t[0]["left"] >= eff_boundary],
                           key=lambda t: (t[0]["top"], t[0]["left"]))
+        # Re-sort dept tokens on the same visual line by x so that OCR
+        # y-jitter of 1–2 px does not invert the reading order (e.g.
+        # "FRITO LAY" must not become "LAY FRITO").
+        Y_JITTER = 5
+        if dept_tok:
+            base_y = dept_tok[0][0]["top"]
+            same_line = all(abs(t[0]["top"] - base_y) <= Y_JITTER for t in dept_tok)
+            if same_line:
+                dept_tok = sorted(dept_tok, key=lambda t: t[0]["left"])
         return " ".join(t[1] for t in desc_tok), " ".join(t[1] for t in dept_tok)
 
     lefts = [tok[0]["left"] for tok in mid]
@@ -1015,7 +1042,15 @@ def _compute_desc_dept_boundary(clusters: list) -> "float | None":
             continue
         mid_x = sorted(mid, key=lambda t: t[0]["left"])
         lefts = [t[0]["left"] for t in mid_x]
-        gaps = [lefts[i + 1] - lefts[i] for i in range(len(lefts) - 1)]
+        # Deduplicate x positions before computing gaps.  When two tokens
+        # share the same x (e.g. MONSTER and 16OZ both OCR'd at x=1161),
+        # the 0-px gap between them inflates the adjacent gap and can make
+        # it appear larger than the real column-boundary gap that follows.
+        # After dedup each unique column contributes exactly one value.
+        lefts_u = sorted(set(lefts))
+        if len(lefts_u) < 2:
+            continue
+        gaps = [lefts_u[i + 1] - lefts_u[i] for i in range(len(lefts_u) - 1)]
         if not gaps:
             continue
         max_gap = max(gaps)
@@ -1025,11 +1060,15 @@ def _compute_desc_dept_boundary(clusters: list) -> "float | None":
         # Strict threshold: column gap must be ≥ 2× avg inter-word gap AND
         # ≥ 100 px larger than the avg, to avoid false positives.
         if len(gaps) == 1 or max_gap >= max(avg_other * 2.0, avg_other + 100):
-            dept_starts.append(float(lefts[max_idx + 1]))
+            dept_starts.append(float(lefts_u[max_idx + 1]))
     if len(dept_starts) < 2:
         return None
     dept_starts.sort()
-    return dept_starts[len(dept_starts) // 2]  # median
+    # Use the 10th-percentile (leftmost 10 % of dept start positions) instead
+    # of the median so that departments with small x (ENERGY, AGUA, TOBACCO)
+    # are captured correctly.  The minimum is not used because MONSTER-style
+    # products (16OZ at same x as desc word) can produce false low values.
+    return dept_starts[int(len(dept_starts) * 0.10)]
 
 
 def _parse_plu_row_by_format(cluster: dict, boundary_x: float = None) -> "dict | None":
@@ -1069,22 +1108,32 @@ def _parse_plu_row_by_format(cluster: dict, boundary_x: float = None) -> "dict |
             idx += 1
     # ────────────────────────────────────────────────────────────────────────
 
-    # ── X-position deduplication ────────────────────────────────────────────
+    # ── X-position deduplication (numeric tokens only) ──────────────────────
     # Adjacent-row bleed: OCR sometimes assigns a numeric token from a nearby
-    # row to this cluster because it is within the y-tolerance window.  When
-    # two tokens land at nearly the same x-column (same POS printer column),
-    # keep only the one whose y is closest to the barcode anchor y.  This
-    # removes duplicate PCT or MONEY values without discarding valid tokens.
+    # row to this cluster.  When two NUMERIC tokens land at nearly the same
+    # x-column (same POS printer column) keep only the one whose y is closest
+    # to the barcode anchor y.  Text tokens (description/department words) are
+    # intentionally excluded from deduplication so multi-word dept names that
+    # span columns close together (e.g. "GROCERY" x=1771 and "TAX" x=1764)
+    # are never silently dropped.
     ref_y = cluster.get("top", 0)
     if ref_y:
+        def _is_numeric_tok(txt: str) -> bool:
+            return bool(
+                _MONEY_VAL_RE.match(txt) or _PCT_VAL_RE.match(txt)
+                or _INT_VAL_RE.match(txt) or txt in ("$", "%")
+            )
+        text_toks = [t for t in tokens if not _is_numeric_tok(t[1])]
+        num_toks  = [t for t in tokens if _is_numeric_tok(t[1])]
         buckets: dict = {}
-        for tok in tokens:
+        for tok in num_toks:
             bk = round(tok[0]["left"] / 14) * 14   # group x within ±7 px
             if bk not in buckets:
                 buckets[bk] = tok
             elif abs(tok[0]["top"] - ref_y) < abs(buckets[bk][0]["top"] - ref_y):
                 buckets[bk] = tok   # prefer y-closer token
-        tokens = sorted(buckets.values(), key=lambda t: t[0]["left"])
+        tokens = sorted(text_toks + list(buckets.values()),
+                        key=lambda t: t[0]["left"])
     # ────────────────────────────────────────────────────────────────────────
 
     # Optionally skip leading PLU code (4+ digits) and pkg qty (1-2 digits).
@@ -1133,6 +1182,11 @@ def _parse_plu_row_by_format(cluster: dict, boundary_x: float = None) -> "dict |
     # numeric data was found — some rows have OCR-missed numbers but the
     # product name and dept are still valid and must appear in the report.
     mid = tokens[start: right + 1]
+    # Remove any stray dollar-amount tokens the right-to-left scanner didn't
+    # consume (extra $ values from adjacent-row bleed).  Only tokens that start
+    # with "$" are filtered so that bare integers that are part of a product
+    # name (e.g. "2" in "SPRITE 2 LITER") are preserved.
+    mid = [t for t in mid if not t[1].startswith("$")]
     desc, dept = _split_desc_dept_by_xgap(mid, boundary_x=boundary_x)
     desc = re.sub(r"^\d{4,}\s*", "", desc).strip()
     desc = re.sub(r"^\d{1,2}\s+", "", desc).strip()
