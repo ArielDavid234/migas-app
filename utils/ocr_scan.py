@@ -56,25 +56,38 @@ def _ocrspace_request(image_path: str, api_key: str, *, language: str = "spa", o
     with open(image_path, "rb") as f:
         raw_bytes = f.read()
 
-    compressed, compressed_mime = _compress_image_bytes(raw_bytes)
-
     ext = image_path.rsplit(".", 1)[-1].lower()
-    fmt_map = {
-        "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
-        "bmp": "image/bmp", "tiff": "image/tiff", "tif": "image/tiff",
-        "webp": "image/webp",
-    }
-    mime = compressed_mime or fmt_map.get(ext, "image/jpeg")
-    img_b64 = base64.b64encode(compressed).decode("utf-8")
+    is_pdf = ext == "pdf"
 
-    payload = {
+    common_params = {
         "apikey": api_key,
-        "base64Image": f"data:{mime};base64,{img_b64}",
         "language": language,
         "isOverlayRequired": overlay,
         "detectOrientation": True,
         "OCREngine": 2,  # Engine 2 = mejor para texto impreso
     }
+
+    if is_pdf:
+        import os as _os_pdf
+        # PDFs are uploaded via multipart/form-data; OCR.space extracts all pages.
+        request_kwargs: dict = {
+            "data": common_params,
+            "files": {"file": (_os_pdf.path.basename(image_path), raw_bytes, "application/pdf")},
+            "timeout": 90,
+        }
+    else:
+        compressed, compressed_mime = _compress_image_bytes(raw_bytes)
+        fmt_map = {
+            "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+            "bmp": "image/bmp", "tiff": "image/tiff", "tif": "image/tiff",
+            "webp": "image/webp",
+        }
+        mime = compressed_mime or fmt_map.get(ext, "image/jpeg")
+        img_b64 = base64.b64encode(compressed).decode("utf-8")
+        request_kwargs = {
+            "data": {**common_params, "base64Image": f"data:{mime};base64,{img_b64}"},
+            "timeout": 60,
+        }
 
     import time as _time
     last_exc: Exception | None = None
@@ -82,8 +95,7 @@ def _ocrspace_request(image_path: str, api_key: str, *, language: str = "spa", o
         try:
             resp = requests.post(
                 "https://api.ocr.space/parse/image",
-                data=payload,
-                timeout=60,
+                **request_kwargs,
             )
             if resp.status_code in (502, 503, 504):
                 last_exc = RuntimeError(f"OCR.space error {resp.status_code} (intento {_attempt + 1}/3)")
@@ -121,7 +133,12 @@ def _ocr_with_ocrspace_overlay(image_path: str, api_key: str) -> dict:
     overlay_words = []
     overlay_lines = []   # OCR-defined line clusters — much more reliable than y-threshold
 
-    for result in results:
+    page_y_offset = 0
+    max_top_seen = 0
+    for page_idx, result in enumerate(results):
+        if page_idx > 0:
+            # Offset subsequent pages so y-coordinates don't collide with previous pages
+            page_y_offset = max_top_seen + 200
         overlay = result.get("TextOverlay") or {}
         for line in overlay.get("Lines", []) or []:
             line_words = []
@@ -129,10 +146,13 @@ def _ocr_with_ocrspace_overlay(image_path: str, api_key: str) -> dict:
                 text = str(word.get("WordText", "") or "").strip()
                 if not text:
                     continue
+                top = int(word.get("Top", 0) or 0) + page_y_offset
+                if top > max_top_seen:
+                    max_top_seen = top
                 w = {
                     "text": text,
                     "left": int(word.get("Left", 0) or 0),
-                    "top":  int(word.get("Top",  0) or 0),
+                    "top":  top,
                 }
                 overlay_words.append(w)
                 line_words.append(w)
@@ -144,7 +164,7 @@ def _ocr_with_ocrspace_overlay(image_path: str, api_key: str) -> dict:
                     w["text"] for w in line_words if w["text"].strip()
                 )
                 overlay_lines.append({
-                    "top":   int(line.get("MinTop",  line_words[0]["top"])),
+                    "top":   int(line.get("MinTop", 0) or 0) + page_y_offset,
                     "words": line_words,
                     "text":  cluster_text,
                 })

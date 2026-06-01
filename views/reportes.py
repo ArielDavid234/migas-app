@@ -930,9 +930,9 @@ def reportes_view(page: ft.Page, user):
         async def _add_page(e):
             picker = ft.FilePicker()
             picked = await picker.pick_files(
-                dialog_title="Seleccionar foto de la página",
+                dialog_title="Seleccionar foto o PDF de la página",
                 file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp"],
+                allowed_extensions=["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp", "pdf"],
                 allow_multiple=False,
                 with_data=True,
             )
@@ -971,7 +971,7 @@ def reportes_view(page: ft.Page, user):
                         weight=ft.FontWeight.BOLD, color=PRIMARY_DARK),
             ], spacing=8),
             content=ft.Column([
-                ft.Text("Añade una foto por cada página del reporte.",
+                ft.Text("Añade una foto o PDF por cada página del reporte.",
                         size=BODY_SIZE, color=TEXT_SECONDARY),
                 ft.ElevatedButton(
                     content=ft.Row([
