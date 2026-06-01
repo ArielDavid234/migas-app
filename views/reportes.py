@@ -966,8 +966,13 @@ def reportes_view(page: ft.Page, user):
                 else:
                     # Modo web: subir el archivo por HTTP
                     upload_url = page.get_upload_url(f.name, 600)
-                    picker.upload([ft.FilePickerUploadFile(name=f.name, upload_url=upload_url)])
-                    await done_evt.wait()
+                    await picker.upload([
+                        ft.FilePickerUploadFile(upload_url=upload_url, id=f.id, name=f.name)
+                    ])
+                    try:
+                        await _asyncio.wait_for(done_evt.wait(), timeout=120.0)
+                    except _asyncio.TimeoutError:
+                        raise RuntimeError("El archivo tardó demasiado en subirse (>120s)")
                     if "error" in upload_info:
                         raise RuntimeError(upload_info["error"])
                     filepath = upload_info["path"]
