@@ -944,9 +944,8 @@ def reportes_view(page: ft.Page, user):
                     )
                     done_evt.set()
 
+            # FilePicker is a Service control — do NOT add to page.overlay
             picker = ft.FilePicker(on_upload=_on_upload)
-            page.overlay.append(picker)
-            page.update()
 
             picked = await picker.pick_files(
                 dialog_title="Seleccionar foto o PDF de la página",
@@ -957,27 +956,20 @@ def reportes_view(page: ft.Page, user):
             )
 
             if not picked:
-                try:
-                    page.overlay.remove(picker)
-                    page.update()
-                except Exception:
-                    pass
                 return
 
             f = picked[0]
             try:
                 if f.path:
-                    # Modo escritorio: la ruta del archivo está disponible directamente
+                    # Modo escritorio: ruta directa disponible
                     filepath, tmp_path = f.path, None
                 else:
-                    # Modo web: subir el archivo por HTTP al servidor Python
+                    # Modo web: subir el archivo por HTTP
                     upload_url = page.get_upload_url(f.name, 600)
                     picker.upload([ft.FilePickerUploadFile(name=f.name, upload_url=upload_url)])
                     await done_evt.wait()
-
                     if "error" in upload_info:
                         raise RuntimeError(upload_info["error"])
-
                     filepath = upload_info["path"]
                     tmp_path = filepath
 
@@ -985,12 +977,6 @@ def reportes_view(page: ft.Page, user):
                 _refresh_pages_col()
             except Exception as exc:
                 show_toast(page, f"Error al cargar el archivo: {exc}", is_error=True)
-            finally:
-                try:
-                    page.overlay.remove(picker)
-                    page.update()
-                except Exception:
-                    pass
 
         async def _do_scan(e):
             if not pending:
