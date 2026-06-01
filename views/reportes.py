@@ -928,22 +928,69 @@ def reportes_view(page: ft.Page, user):
             _refresh_pages_col()
 
         async def _add_page(e):
-            picker = ft.FilePicker()
+            import asyncio as _asyncio
+            import os as _os_add
+
+            done_evt = _asyncio.Event()
+            upload_info: dict = {}
+
+            async def _on_upload(ev: ft.FilePickerUploadEvent):
+                if ev.error:
+                    upload_info.setdefault("error", str(ev.error))
+                    done_evt.set()
+                elif ev.progress is not None and ev.progress >= 1.0:
+                    upload_info["path"] = _os_add.path.join(
+                        page.upload_dir or "uploads", ev.file_name
+                    )
+                    done_evt.set()
+
+            picker = ft.FilePicker(on_upload=_on_upload)
+            page.overlay.append(picker)
+            page.update()
+
             picked = await picker.pick_files(
                 dialog_title="Seleccionar foto o PDF de la página",
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp", "pdf"],
                 allow_multiple=False,
-                with_data=True,
+                with_data=False,
             )
+
             if not picked:
+                try:
+                    page.overlay.remove(picker)
+                    page.update()
+                except Exception:
+                    pass
                 return
+
+            f = picked[0]
             try:
-                filepath, tmp_path = _materialize_picked_file(picked[0])
-                pending.append((filepath, tmp_path, picked[0].name or f"imagen_{len(pending)+1}"))
+                if f.path:
+                    # Modo escritorio: la ruta del archivo está disponible directamente
+                    filepath, tmp_path = f.path, None
+                else:
+                    # Modo web: subir el archivo por HTTP al servidor Python
+                    upload_url = page.get_upload_url(f.name, 600)
+                    picker.upload([ft.FilePickerUploadFile(name=f.name, upload_url=upload_url)])
+                    await done_evt.wait()
+
+                    if "error" in upload_info:
+                        raise RuntimeError(upload_info["error"])
+
+                    filepath = upload_info["path"]
+                    tmp_path = filepath
+
+                pending.append((filepath, tmp_path, f.name or f"archivo_{len(pending)+1}"))
                 _refresh_pages_col()
             except Exception as exc:
-                show_toast(page, f"Error guardando imagen: {exc}", is_error=True)
+                show_toast(page, f"Error al cargar el archivo: {exc}", is_error=True)
+            finally:
+                try:
+                    page.overlay.remove(picker)
+                    page.update()
+                except Exception:
+                    pass
 
         async def _do_scan(e):
             if not pending:

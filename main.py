@@ -386,4 +386,7 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.run(main)
+    import os as _os_main, tempfile as _tf_main
+    _up_dir = _os_main.path.join(_tf_main.gettempdir(), "migasapp_uploads")
+    _os_main.makedirs(_up_dir, exist_ok=True)
+    ft.run(main, upload_dir=_up_dir)
